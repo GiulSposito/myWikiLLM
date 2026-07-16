@@ -1,0 +1,31 @@
+# Secrets and keys
+.env
+*.key
+*.pem
+secrets/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Obsidian workspace (local state, not shared)
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.obsidian/cache
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# Temp and scratch
+*.tmp
+*.bak
+scratch/
+
+# Large binary files in raw (optional — uncomment if needed)
+# raw/**/*.pdf
+# raw/**/*.pptx

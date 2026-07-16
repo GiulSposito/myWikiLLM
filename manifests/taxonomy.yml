@@ -1,0 +1,58 @@
+# Controlled vocabulary for the LLM Wiki Vault
+
+page_types:
+  - source
+  - entity
+  - concept
+  - project
+  - pattern
+  - decision
+  - synthesis
+  - comparison
+  - question
+  - data-dictionary
+
+status_values:
+  - draft
+  - active
+  - needs-review
+  - deprecated
+  - conflict
+
+confidence_levels:
+  - low
+  - medium
+  - high
+
+entity_types:
+  - company
+  - person
+  - product
+  - tool
+  - organization
+  - framework
+  - place
+
+domains:
+  - ai-ml
+  - knowledge-management
+  - data-architecture
+  - consulting
+  - finance
+  - healthcare
+  - process-mining
+  - ontology
+  - agents
+
+tag_prefixes:
+  - wiki/source
+  - wiki/entity
+  - wiki/concept
+  - wiki/project
+  - wiki/pattern
+  - wiki/decision
+  - wiki/synthesis
+  - wiki/comparison
+  - wiki/question
+  - domain/
+  - entity/

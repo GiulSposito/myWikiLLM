@@ -1,0 +1,11 @@
+# Registry of ingested sources
+# Format:
+# - slug: source-slug
+#   title: Source Title
+#   type: pdf|article|slides|transcript|repo|web
+#   ingested: YYYY-MM-DD
+#   path: raw/... or url: https://...
+#   pages_created: []
+#   pages_updated: []
+
+sources: []

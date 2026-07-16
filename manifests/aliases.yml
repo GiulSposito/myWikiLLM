@@ -1,0 +1,12 @@
+# Global alias registry — prevents duplicate concept pages
+# Format: canonical-slug: [alias1, alias2, ...]
+
+# This file is managed by the Knowledge Compiler Agent.
+# Add entries here when a concept has multiple names.
+# Example:
+# llm-wiki:
+#   - karpathy-wiki
+#   - ai-maintained-wiki
+#   - knowledge-compiler-pattern
+
+# No aliases registered yet.
