@@ -104,18 +104,20 @@ O relatorio deve conter:
 - Uma secao por categoria de problema com lista de arquivos afetados
 - Secao de recomendacoes priorizadas (ordenar por impacto: broken links > missing frontmatter > orphans > etc.)
 
-## Fluxo de execucao
+## Fluxo de execucao (single-pass)
 
 1. Mapear todos os arquivos `.md` no escopo definido
-2. Parsear frontmatter YAML de cada arquivo
-3. Extrair todos os `[[wikilinks]]` de cada arquivo
-4. Construir grafo de links (origem -> destino)
-5. Verificar existencia de cada destino de link
-6. Identificar nos sem links de entrada (orphans)
-7. Coletar todos os aliases e detectar duplicatas
-8. Verificar campos obrigatorios no frontmatter de cada arquivo
-9. Verificar `sources[]` de cada arquivo
-10. Comparar lista de arquivos com entradas em `wiki/index.md`
-11. Gerar JSON estruturado
-12. Salvar relatorio em `outputs/reports/wiki-lint-YYYY-MM-DD.md`
-13. Retornar JSON como output principal para o agente que o invocou
+2. Inicializar estruturas: `files_data = {}`, `all_links = {}`, `inbound_counts = {}`
+3. Para CADA arquivo (uma única leitura por arquivo):
+   a. Parsear frontmatter YAML → registrar em `files_data[path]`
+   b. Extrair todos `[[wikilinks]]` → registrar em `all_links[path]`
+   c. Verificar campos obrigatórios → acumular `missing_fields`
+   d. Coletar aliases → acumular `alias_registry`
+4. Após leitura completa (processamento cruzado):
+   a. Para cada link em `all_links`: verificar se destino existe em `files_data` → `broken_links`
+   b. Para cada arquivo: contar inbound links → `orphans` (count == 0)
+   c. Varrer `alias_registry` por duplicatas → `duplicate_aliases`
+   d. Checar `sources[]` em cada arquivo → `empty_sources`
+   e. Comparar `files_data` keys com `wiki/index.md` → `not_in_index`
+5. Gerar JSON estruturado e salvar relatorio em `outputs/reports/wiki-lint-YYYY-MM-DD.md`
+6. Retornar JSON como output principal para o agente que o invocou

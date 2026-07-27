@@ -13,7 +13,8 @@ Guardião da consistência do conhecimento. Comparar claims extraídos de uma no
 
 - Recebe como input:
   - (a) Lista de claims extraídos da nova fonte (output do source-reader)
-  - (b) Páginas wiki relevantes existentes a serem comparadas
+  - (b) Páginas wiki explicitamente linkadas no source page sob "Relevant Entities" e "Relevant Concepts" — essas são as páginas com maior probabilidade de conflito
+  - Nota: páginas NÃO linkadas no source também podem ter conflitos, mas são de baixa prioridade e não fazem parte desta varredura inicial
 - Para CADA claim novo: verificar se contradiz algum claim existente na wiki
 - NUNCA resolver contradições silenciosamente
 - NUNCA escolher qual claim é "correto" — apenas reportar o conflito

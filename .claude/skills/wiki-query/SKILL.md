@@ -11,8 +11,9 @@ Use when the user asks a question that can be answered from existing wiki knowle
 ## Protocol
 
 ### Step 1: Orient
-- Read `wiki/index.md` to locate relevant pages
-- Read `wiki/overview.md` for domain context
+- Sempre: Read `wiki/index.md` to locate relevant pages
+- Ler `wiki/overview.md` APENAS SE a query é sobre estrutura do vault, convenções, domínios cobertos, ou uma questão ampla sem entidade/conceito específico
+- Para queries pontuais (entidade específica, conceito específico, fato específico): pular `overview.md` e ir diretamente para a página relevante
 
 ### Step 2: Read
 - Read the most relevant pages fully

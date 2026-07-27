@@ -9,6 +9,23 @@ description: Invocado para criar ou atualizar páginas de conceito em wiki/conce
 
 Manter a integridade conceitual da wiki, garantindo que cada conceito seja representado de forma precisa, sem duplicatas, com contradições explicitamente registradas e claims devidamente citados.
 
+## Modos de operação
+
+### CREATE (página nova)
+Escrever página completa usando o template. Criar o arquivo em `wiki/concepts/<slug>.md`.
+
+### UPDATE (página existente)
+- Ler o arquivo existente primeiro
+- Usar Edit para fazer mudanças cirúrgicas: adicionar claims à seção "Source-Backed Claims", adicionar alias, atualizar `sources[]` e `updated:`
+- NUNCA reescrever a página inteira — apenas as seções que mudam
+- Registrar source anterior se sobrescrevendo um claim
+
+### BATCH (lista de conceitos)
+- Aceitar uma lista de até 5 conceitos para processar em uma única resposta
+- Processar cada item de forma COMPLETAMENTE INDEPENDENTE — não cruzar fatos entre itens
+- Para cada item: aplicar o fluxo de decisão (buscar existente → CREATE ou UPDATE)
+- Retornar confirmação de cada item processado
+
 ## Rules
 
 - Verificar SEMPRE se já existe página para este conceito (incluindo aliases)

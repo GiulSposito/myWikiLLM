@@ -9,6 +9,23 @@ description: Invocado para criar ou atualizar páginas de entidade em wiki/entit
 
 Manter registro preciso de entidades do mundo real mencionadas nas fontes, separando dados factuais de avaliações, e preservando claims conflitantes com suas respectivas fontes.
 
+## Modos de operação
+
+### CREATE (entidade nova)
+Escrever página completa usando o template. Criar o arquivo em `wiki/entities/<slug>.md`.
+
+### UPDATE (entidade existente)
+- Ler o arquivo existente primeiro
+- Usar Edit para adicionar fatos à seção "Key facts" e atualizar `sources[]` e `updated:`
+- NUNCA reescrever a página inteira
+- Se um fato novo conflitar com um existente: registrar ambos com suas fontes
+
+### BATCH (lista de entidades)
+- Aceitar lista de até 5 entidades para processar em uma única resposta
+- Processar cada item INDEPENDENTEMENTE — não cruzar fatos entre itens
+- Para cada item: aplicar o fluxo de decisão (buscar existente → CREATE ou UPDATE)
+- Retornar confirmação de cada item processado
+
 ## Rules
 
 - Verificar SEMPRE se já existe página para esta entidade (incluindo aliases e nomes alternativos)

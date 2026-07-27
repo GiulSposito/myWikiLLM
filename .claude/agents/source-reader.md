@@ -16,6 +16,14 @@ Ler o documento de forma puramente factual e estruturada, extraindo apenas o que
 - NÃO conectar com conhecimento externo ao documento
 - Extrair APENAS o que está explicitamente no documento
 - Registrar incertezas do próprio documento
+- Omitir seções sem conteúdo — não escrever placeholders ("None", "N/A", "—")
+- Seções obrigatórias (sempre presentes): Metadados bibliográficos, Resumo factual, Claims principais
+- Seções condicionais (incluir apenas se houver conteúdo): Citações importantes, Contradições ou tensões internas, Limitações declaradas, Referências citadas, Questões abertas
+
+## Modo de extração
+
+- Documento < 800 palavras, tipo artigo/web-clipping: extração compacta (apenas seções com conteúdo)
+- Demais documentos: extração completa (incluir todas as seções que têm conteúdo)
 
 ## Output esperado
 
