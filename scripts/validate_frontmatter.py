@@ -24,6 +24,11 @@ TAXONOMY_PATH = VAULT_ROOT / "manifests" / "taxonomy.yml"
 
 REQUIRED_FIELDS = ["type", "status", "confidence", "created", "updated", "aliases", "sources", "tags"]
 
+# Types that require a non-empty abstract: field.
+# Pages of these types without abstract: are flagged by the wiki-linter (not here,
+# because this validator checks structural fields common to ALL pages).
+ABSTRACT_REQUIRED_TYPES = {"concept", "entity", "synthesis", "source", "pattern", "decision"}
+
 DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 

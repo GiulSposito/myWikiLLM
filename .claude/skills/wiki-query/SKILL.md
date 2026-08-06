@@ -10,7 +10,13 @@ Use when the user asks a question that can be answered from existing wiki knowle
 
 ## Protocol
 
-### Step 1: Orient
+### Step 0: Route the query
+- Read `manifests/query-routing.yml`
+- Tokenize the user's query into keywords; check each against topic keys and labels in `query-routing.yml`
+- **If one or more topics match**: load only the pages listed under those topics (`pages`, `synthesis`, `decisions`). Skip Step 1 entirely and proceed to Step 2.
+- **If no topic matches** OR the file has `topics: {}` (empty): fall back to Step 1.
+
+### Step 1: Orient (fallback only — skipped when Step 0 matched)
 - Sempre: Read `wiki/index.md` to locate relevant pages
 - Ler `wiki/overview.md` APENAS SE a query é sobre estrutura do vault, convenções, domínios cobertos, ou uma questão ampla sem entidade/conceito específico
 - Para queries pontuais (entidade específica, conceito específico, fato específico): pular `overview.md` e ir diretamente para a página relevante
@@ -20,6 +26,12 @@ Use when the user asks a question that can be answered from existing wiki knowle
 - Follow wikilinks to related pages when they add context (limit to 2 hops)
 - Check `wiki/sources/` pages for evidence when claims need verification
 - Prioritize pages with `confidence: high` and `status: active`
+
+### Step 2b: Check for domain knowledge map
+- If the matched page cluster (from Step 0 or Step 1) has more than 5 pages in the same domain:
+  - Check if `wiki/synthesis/knowledge-map-<domain>.md` exists
+  - If yes: load the knowledge map **instead of** the individual pages (it is a pre-compiled dense reference for the domain)
+  - If no: load individual pages as usual
 
 ### Step 3: Synthesize
 - Compose answer from wiki content only

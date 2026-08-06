@@ -36,6 +36,8 @@ Use when the user wants to audit the health of the wiki, or after a batch ingest
 
 12. **Data-dictionary not in main index** *(new)*: verify that `wiki/data-dictionary/*/index.md` pages (domain-level hubs) appear in `wiki/index.md` under the "Data Dictionaries" section. Report any domain index that is missing from the main index.
 
+13. **Missing abstract** *(new)*: find all pages of type `concept`, `entity`, `synthesis`, `source`, `pattern`, or `decision` where the `abstract:` field is absent or empty. These pages will not appear with content signal in the enriched index. Flag them as `needs-review` in the report (do NOT auto-set status).
+
 ### Output
 - **ALWAYS** save the full report to `outputs/reports/wiki-lint-YYYY-MM-DD.md` — this is mandatory, not optional
 - Print summary to terminal
@@ -62,6 +64,7 @@ Use when the user wants to audit the health of the wiki, or after a batch ingest
 | Log gaps | N |
 | Status promotion candidates | N |
 | Data-dictionary index gaps | N |
+| Missing abstract | N |
 
 ## Dead Links
 ...
@@ -73,4 +76,8 @@ Pages eligible for draft → active (2+ sources, not yet reviewed):
 ## Data-Dictionary Index Gaps
 Domain indexes missing from wiki/index.md:
 - wiki/data-dictionary/<domain>/index.md
+
+## Missing Abstract
+Pages of type concept/entity/synthesis/source/pattern/decision without an `abstract:` field:
+- [[concept-slug]] — type: concept
 ```

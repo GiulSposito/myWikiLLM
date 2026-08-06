@@ -121,10 +121,20 @@ confidence: <level>   # low | medium | high
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 aliases: []           # alternative names for this page
+abstract: ""          # 1–2 factual sentences describing page content (required for concept/entity/synthesis/source/pattern/decision)
 sources: []           # list of source slugs that support this page
 tags: []              # domain and topic tags
 ---
 ```
+
+**Rules for `abstract:`**
+- 1–2 sentences maximum
+- Factual, not meta — state content directly, never write "This page describes..."
+- Written in the same language as the page content
+- Required for types: `concept`, `entity`, `synthesis`, `source`, `pattern`, `decision`
+- Optional for: `question` (speculative by nature), `comparison`, `data-dictionary`
+- Populated at creation time; updated only if the page's core meaning changes
+- The linter flags pages of required types with absent or empty `abstract:` as needing attention
 
 ### Type Taxonomy
 
@@ -189,6 +199,7 @@ confidence: medium
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 aliases: []
+abstract: ""
 sources: []
 tags: []
 ---
@@ -265,6 +276,7 @@ confidence: medium
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 aliases: []
+abstract: ""
 sources: []
 tags: []
 ---
@@ -332,6 +344,7 @@ confidence: medium
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 aliases: []
+abstract: ""
 sources: []
 tags: []
 ---
@@ -389,6 +402,7 @@ confidence: medium
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 aliases: []
+abstract: ""
 sources: []
 tags: []
 ---
@@ -446,6 +460,7 @@ confidence: low
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 aliases: []
+abstract: ""
 sources: []
 tags: []
 ---
@@ -501,6 +516,7 @@ confidence: medium
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 aliases: []
+abstract: ""
 sources: []
 tags: []
 ---
@@ -542,6 +558,55 @@ Real-world instances of this pattern in action.
 ## Sources
 
 - [[source-slug]]
+```
+
+---
+
+### Template: knowledge-map
+
+File path: `wiki/synthesis/knowledge-map-<domain>.md`
+
+A pre-compiled, dense reference document for a major domain. Used by the QUERY protocol (Step 2b) when a cluster has more than 5 pages in the same domain. Not updated during ingest — regenerated periodically via `/wiki-review` or an explicit synthesis pass.
+
+```markdown
+---
+type: synthesis
+status: active
+confidence: high
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+aliases: []
+abstract: "Mapa de conhecimento do domínio <DOMAIN>: <one-sentence scope description>."
+sources: []
+tags: [knowledge-map, <domain>, domain-overview]
+---
+
+# Knowledge Map: <DOMAIN>
+
+## Domain Scope
+What this domain covers and its boundaries.
+
+## Core Concepts
+- [[concept-slug]] — one-line role in the domain
+- [[concept-slug-2]] — ...
+
+## Key Decisions
+- [[decision-slug]] — what was decided and why (one line)
+
+## Active Synthesis Pages
+- [[synthesis-slug]] — thesis in one line
+
+## Open Questions
+- [[question-slug]] — what is unresolved
+
+## Domain Interfaces
+- **→ <other-domain>**: how this domain connects (one line)
+
+## Data Assets
+- [[data-dictionary/<domain>/index]] — tables and indicators
+
+## Last Full Synthesis Pass
+YYYY-MM-DD
 ```
 
 ---
@@ -696,6 +761,7 @@ Return a summary listing:
 - ADR proposals (decisions detected, not yet created)
 - Pattern proposals (recurring approaches detected, not yet created)
 - Status promotion candidates (pages with 2+ sources still in `draft`)
+- Query routing proposals: new topic entries or page additions for `manifests/query-routing.yml` (do NOT auto-update — list for user confirmation)
 - Any decisions deferred to the user
 
 **Step 12b — Post-ingest query ritual**
@@ -714,13 +780,27 @@ Use `/wiki-query <question>` to trigger this operation.
 
 ### Step-by-Step Protocol
 
-**Step 1 — Orientation**
+**Step 0 — Route the query**
 
-Read `wiki/index.md` and `wiki/overview.md` to understand what domains and pages exist in the vault.
+Read `manifests/query-routing.yml`. Tokenize the user's query into keywords and check against topic keys and labels.
+
+- **If one or more topics match**: load only the pages listed under those topics (`pages`, `synthesis`, `decisions`). Skip Step 1 entirely and proceed to Step 2.
+- **If no topic matches** OR the file has `topics: {}` (empty): fall back to Step 1.
+
+**Step 1 — Orientation** (fallback only — skipped when Step 0 matched)
+
+Read `wiki/index.md` and `wiki/overview.md` to understand what domains and pages exist in the vault. Read `wiki/overview.md` only if the query is about vault structure, conventions, or a broad topic without a specific entity/concept. For pointed queries, skip `overview.md` and go directly to the relevant page.
 
 **Step 2 — Identify relevant pages**
 
 Based on the question, identify the most relevant concept, entity, synthesis, and source pages. Use keyword matching on page titles and tags. Search `wiki/index.md` headings first, then do targeted reads.
+
+**Step 2b — Check for domain knowledge map**
+
+If the matched page cluster (from Step 0 or Step 1) has more than 5 pages in the same domain:
+- Check if `wiki/synthesis/knowledge-map-<domain>.md` exists
+- If yes: load the knowledge map **instead of** the individual pages (it is a pre-compiled dense reference)
+- If no: load individual pages as usual
 
 **Step 3 — Read primary pages**
 
@@ -781,7 +861,7 @@ Find all pages (except `index.md`, `log.md`, `overview.md`, `dashboard.md`, `que
 
 **5. Incomplete frontmatter**
 
-Check all pages for the required frontmatter fields: `type`, `status`, `confidence`, `created`, `updated`, `aliases`, `sources`, `tags`. Report missing fields per file.
+Check all pages for the required frontmatter fields: `type`, `status`, `confidence`, `created`, `updated`, `aliases`, `sources`, `tags`. Report missing fields per file. (The `abstract:` field is checked separately in check 9, as it is required only for specific types.)
 
 **6. Unresolved conflicts**
 
@@ -794,6 +874,10 @@ Find all pages with `status: needs-review` where `updated:` is more than 30 days
 **8. Invalid type or status values**
 
 Check that `type` and `status` values match the allowed taxonomy defined in this document. Report any invalid values.
+
+**9. Missing abstract**
+
+Find all pages of type `concept`, `entity`, `synthesis`, `source`, `pattern`, or `decision` where the `abstract:` field is absent or empty. These pages will not appear with content signal in the enriched index. Report them — do not auto-fix.
 
 ### Report Format
 
@@ -814,6 +898,7 @@ Save the lint report to `outputs/reports/wiki-lint-YYYY-MM-DD.md` in this format
 | Unresolved conflicts | N |
 | Stale needs-review | N |
 | Invalid field values | N |
+| Missing abstract | N |
 
 ## Dead Links
 
@@ -846,6 +931,10 @@ Save the lint report to `outputs/reports/wiki-lint-YYYY-MM-DD.md` in this format
 ## Invalid Field Values
 
 - `wiki/synthesis/gamma.md` — type: "overview" is not a valid type
+
+## Missing Abstract
+
+- `wiki/concepts/foo.md` — type: concept, abstract: absent
 ```
 
 ---
@@ -990,6 +1079,7 @@ confidence: low
 created: 2026-01-15
 updated: 2026-01-15
 aliases: []
+abstract: ""
 sources: []
 tags: []
 ---
@@ -1005,6 +1095,7 @@ confidence: high
 created: 2026-01-10
 updated: 2026-07-13
 aliases: [RAG, Retrieval Augmented Generation]
+abstract: "Técnica que combina recuperação de documentos relevantes com geração de texto para reduzir alucinações em LLMs."
 sources: [lewis-2020-rag-paper, gao-2023-rag-survey]
 tags: [nlp, retrieval, architecture, llm]
 ---

@@ -51,6 +51,7 @@ confidence: medium
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 aliases: []
+abstract: "1–2 frases factuais descrevendo o que esta página contém. Não começar com 'Esta página descreve...'."
 sources: []
 tags: [wiki/concept]
 ---

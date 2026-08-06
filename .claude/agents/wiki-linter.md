@@ -87,6 +87,10 @@ Produzir JSON estruturado com as seguintes categorias:
   "conflict_status_pages": {
     "count": 0,
     "items": ["wiki/concepts/pagina-em-conflito.md"]
+  },
+  "missing_abstract": {
+    "count": 0,
+    "items": ["wiki/concepts/pagina-sem-abstract.md"]
   }
 }
 ```
@@ -113,6 +117,7 @@ O relatorio deve conter:
    b. Extrair todos `[[wikilinks]]` → registrar em `all_links[path]`
    c. Verificar campos obrigatórios → acumular `missing_fields`
    d. Coletar aliases → acumular `alias_registry`
+   e. Se type ∈ {concept, entity, synthesis, source, pattern, decision} E `abstract` ausente ou vazio → acumular `missing_abstract`
 4. Após leitura completa (processamento cruzado):
    a. Para cada link em `all_links`: verificar se destino existe em `files_data` → `broken_links`
    b. Para cada arquivo: contar inbound links → `orphans` (count == 0)

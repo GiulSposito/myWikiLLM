@@ -101,7 +101,10 @@ def format_entry(slug: str, data: dict) -> str:
         first_alias = str(aliases[0])
         alias_str = f" — {first_alias}"
 
-    return f"- [[{slug}]]{alias_str} — status: {status}, confidence: {confidence}"
+    abstract = data.get("abstract", "") or ""
+    abstract_str = f" — {abstract}" if abstract else ""
+
+    return f"- [[{slug}]]{alias_str}{abstract_str} — status: {status}, confidence: {confidence}"
 
 
 def is_data_dict_index(path: Path, wiki_dir: Path) -> bool:

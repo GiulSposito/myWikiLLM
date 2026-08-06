@@ -1,181 +1,140 @@
-# Plano: Reset da base de conhecimento para zero
+# Plano: Implementar Query Optimization Strategy (3 camadas)
 
 ## Objetivo
 
-Remover todo o conteúdo de domínio acumulado (raw + wiki compilado) deixando o vault pronto para uma nova base de conhecimento. A infraestrutura do sistema (agentes, skills, scripts, manifests de taxonomia, configurações) é preservada integralmente.
+Implementar as três camadas de otimização de query descritas em `docs/query-optimization-strategy.md` nos comandos, agentes, skills e scripts do vault.
 
 ---
 
-## O que DELETAR
+## Escopo: O que muda em cada arquivo
 
-### raw/ — todo o conteúdo de fonte (exceto .gitkeep)
+### Novos arquivos (1)
 
-```
-raw/articles/
-  plano_analise_dados.md
-  plano_service_management.md
-  service_managment_completo.md
-  service_managment_overview.md
-  sm_critica_paineis.md
-  sm_paineis_gap_analysis.md
-  sm_paineis_mvp_visual.md
-  sm_painel_01_torre_controle.md
-  sm_painel_02_gestao_filas.md
-  sm_painel_03_sla_aging_risco.md
-  sm_painel_04_fluxo_gargalos.md
-  sm_painel_05_pendencias_qualidade.md
-  sm_painel_06_capacidade_produtividade.md
-  srv_mgt_generic_mvp_panels.md
+| Arquivo | O que é |
+|---------|---------|
+| `manifests/query-routing.yml` | Skeleton vazio, pronto para receber tópicos ao longo das ingestões |
 
-raw/transcripts/
-  (todos os .md exceto .gitkeep)
-  Atualiza-o-dos-Protocolos-no-Protomake-6dcbc856-5812.md
-  "Atualização dos Protocolos no Protomake Jul 13, 2026.md"
-  "Audio - Assistencial Emergencia Dusléia.m4a Jul 14, 2026.md"
-  "Audio Protocolos - Dr Thurlierme.mp3 Jul 14, 2026.md"
-  Audio-Assistencial-Emergencia-Dusle-ia-m4a-5d8a6744-80f6.md
-  Audio-Protocolos-Dr-Thurlierme-mp3-1802ef1c-c27a.md
-  Gest-o-de-Autoriza-es-e-SLAs-a0fdc0b1-8142.md
-  "Gestão de Autorizações e SLAs Jul 14, 2026.md"
-  Hapvida - SLAs Autorização - summário.md
-  Hapvida - SLAs Autorização - transcricao.md
-  "Hapvida - Visão geral Rápida do Projeto e Status Jul 13, 2026.md"
-  "Hapvida In Loco Jul 7, 2026.md"
-  Hapvida-In-Loco-db9c0fa7-4304.md
-  Hapvida-Vis-o-geral-R-pida-do-Projeto-e-Status-8f525163-4d03.md
-  Jul-14-11-46-AM-d83fcc91-9acf.md
-  regulacao_briefing.md
-  summary_20260622.md
-  transcription_20260622.md
-  WhatsApp-Audio-2026-07-14-at-14-35-35-mp4-d7e1ed6f-bccb.md
+### Arquivos modificados (9)
 
-raw/repos/
-  _domains_overview.md
-  Autorizacoes.md
-  "Contas Medicas.md"
-  SAC.md
-  aut/  (diretório inteiro com todas as subpastas e tabelas)
-  cm/   (diretório inteiro)
-  jas/  (diretório inteiro)
-  sac/  (diretório inteiro)
-  (manter .gitkeep)
+| Arquivo | Mudança |
+|---------|---------|
+| `CLAUDE.md` | (1) Schema frontmatter: adicionar `abstract:` após `aliases:`. (2) QUERY: adicionar Step 0 (routing) e Step 2b (knowledge maps). (3) INGEST Step 12: adicionar "Query routing proposals" ao relatório. (4) LINT: adicionar check de `abstract` ausente. |
+| `.claude/skills/wiki-query/SKILL.md` | Adicionar Step 0 (ler query-routing.yml) antes do Step 1; adicionar Step 2b (verificar knowledge map) após Step 2. |
+| `.claude/skills/wiki-ingest/SKILL.md` | Adicionar ao Step 12 report: "Query routing proposals" com instruções de quando propor. |
+| `.claude/skills/wiki-lint/SKILL.md` | Adicionar check #13: pages sem `abstract:` em concepts/entities/synthesis → flag como `needs-review`. |
+| `.claude/agents/wiki-linter.md` | Adicionar categoria `missing_abstract` ao JSON output; adicionar ao algoritmo single-pass (acumular `abstract` absent por arquivo). |
+| `.claude/agents/concept-curator.md` | Template de página: adicionar campo `abstract:` no frontmatter (após `aliases:`), com instrução de 1–2 frases factuais. |
+| `.claude/agents/entity-curator.md` | Template de página: adicionar campo `abstract:` no frontmatter (após `aliases:`), com instrução de 1–2 frases factuais. |
+| `scripts/rebuild_index.py` | Em `format_entry()`: extrair `abstract` do frontmatter e appendar na linha do índice quando presente. |
+| `scripts/validate_frontmatter.py` | Adicionar `abstract` à lista `REQUIRED_FIELDS` (vault está resetado; novas páginas devem ter o campo). |
+
+---
+
+## Detalhe por camada
+
+### Camada 1 — Query Routing Manifest
+
+**`manifests/query-routing.yml`** (novo)
+```yaml
+# manifests/query-routing.yml
+# Maps topic keywords → canonical page slugs for that topic.
+# Updated during INGEST Step 12 (proposals only — user confirms before adding).
+topics: {}
 ```
 
-### wiki/ — todo o conhecimento compilado
-
-Subdiretórios inteiros (apagar recursivamente):
+**`wiki-query` SKILL.md** — inserir Step 0 antes do Step 1 atual:
 ```
-wiki/sources/       (27 arquivos)
-wiki/entities/      (14 arquivos)
-wiki/concepts/      (21 arquivos)
-wiki/projects/      (1 arquivo)
-wiki/patterns/      (5 arquivos)
-wiki/decisions/     (4 arquivos)
-wiki/synthesis/     (6 arquivos)
-wiki/comparisons/   (1 arquivo)
-wiki/questions/     (3 arquivos)
-wiki/data-dictionary/  (aut/, cm/, jas/, sac/ — ~250 arquivos de tabelas)
+### Step 0: Route the query
+- Read `manifests/query-routing.yml`
+- If the query matches one or more topic keywords:
+    Load only the pages listed under that topic (pages + synthesis + decisions)
+    Skip reading index.md entirely — proceed to Step 3
+- If no topic matches OR the file is empty:
+    Fall back to Step 1 (read index.md)
 ```
 
-### maps/ — visualizações geradas
-
+**`wiki-query` SKILL.md** — inserir Step 2b após Step 2 atual:
 ```
-maps/canvas/regulacao-2-0-landscape.canvas
+### Step 2b: Check for domain knowledge map
+- If the matched page cluster has > 5 pages in the same domain:
+    Check if wiki/synthesis/knowledge-map-<domain>.md exists
+    If yes: load the knowledge map instead of the individual pages
+    If no: load individual pages as usual (proceed with Step 2)
 ```
 
-### outputs/ — artefatos derivados
-
+**`wiki-ingest` SKILL.md** — no Step 12, adicionar seção ao relatório:
 ```
-outputs/reports/wiki-lint-2026-07-16.md
+Query routing proposals:
+  - New topic entries to add to manifests/query-routing.yml
+  - Existing topics to add pages to
+  (Do NOT auto-update — list proposals for user confirmation)
 ```
 
 ---
 
-## O que RESETAR (reescrever com scaffold vazio)
+### Camada 2 — Abstract Enrichment
 
-Esses arquivos existem como parte da estrutura permanente do vault mas contêm conteúdo de domínio acumulado que precisa ser limpo:
+**Frontmatter schema** (CLAUDE.md + agentes) — adicionar campo após `aliases:`:
+```yaml
+abstract: "1–2 sentence factual description of what this page contains."
+```
 
-### wiki/index.md
-Reescrever com frontmatter completo e seções vazias (sem entradas de conteúdo).
+Regras para o campo:
+- 1–2 frases
+- Factual, não meta ("This page describes..." é proibido)
+- Mesmo idioma do conteúdo da página
+- Obrigatório em: concept, entity, synthesis, source, pattern, decision
+- Opcional em: question (podem ser especulativos)
 
-### wiki/log.md
-Reescrever com frontmatter completo e nenhuma entrada de ingestão.
+**`scripts/rebuild_index.py`** — mudança na `format_entry()`:
+```python
+abstract = data.get("abstract", "")
+entry = f"- [[{slug}]]{alias_str}"
+if abstract:
+    entry += f" — {abstract}"
+entry += f" — status: {status}, confidence: {confidence}"
+```
 
-### wiki/overview.md
-Já está quase em branco; a seção "Domains covered" já diz "No domains ingested yet". Manter sem alteração (está correto para o estado zero).
+**`scripts/validate_frontmatter.py`** — adicionar `"abstract"` a `REQUIRED_FIELDS`.
 
-### manifests/sources.yml
-Manter apenas o cabeçalho de comentários e `sources: []` vazio.
-
-### .claude/plan.md
-Limpar (este arquivo) após execução — era o plano da sessão anterior.
+**Linter** — nova categoria `missing_abstract` no JSON output do `wiki-linter.md`:
+```json
+"missing_abstract": {
+  "count": 0,
+  "items": ["wiki/concepts/foo.md"]
+}
+```
 
 ---
 
-## O que PRESERVAR intacto
+### Camada 3 — Domain Knowledge Maps
 
-```
-CLAUDE.md                         ← constituição operacional
-README.md                         ← visão geral do sistema
-.gitignore
-.obsidian/                        ← configuração Obsidian
+**`wiki-query` SKILL.md** — Step 2b já inclui a verificação do knowledge map (descrito acima).
 
-.claude/
-  agents/                         ← source-reader, concept-curator, entity-curator,
-                                     contradiction-reviewer, wiki-linter
-  skills/                         ← wiki-ingest, wiki-query, wiki-lint,
-                                     concept-synthesis + outros skills visuais
-  commands/                       ← wiki-map, wiki-review
-  settings.local.json
+**CLAUDE.md** — adicionar template de knowledge map (tipo `synthesis`) e regra de Step 2b no protocolo QUERY.
 
-scripts/
-  validate_frontmatter.py
-  validate_links.py
-  find_orphans.py
-  rebuild_index.py
-
-manifests/
-  taxonomy.yml                    ← taxonomia de tipos e status (agnóstica de domínio)
-  aliases.yml                     ← já vazio, manter
-
-docs/
-  architecture.md
-  detail.md
-  skills.md
-  userguide.md
-  vision.md
-  avaliacao-sistema-jul2026.md    ← doc de avaliação do sistema (não é domínio)
-
-wiki/
-  dashboard.md                    ← queries Dataview — infraestrutura Obsidian
-  overview.md                     ← descrição do vault (domínio neutro)
-
-raw/
-  articles/.gitkeep
-  images/.gitkeep
-  papers/.gitkeep
-  slides/.gitkeep
-  transcripts/.gitkeep
-  web-clippings/.gitkeep
-  repos/.gitkeep
-```
+**Não criar** os knowledge maps agora — eles são criados via `/wiki-review` ou synthesis pass. O plano apenas conecta o protocolo de QUERY para usá-los quando existirem.
 
 ---
 
 ## Sequência de execução
 
-1. Deletar todo o conteúdo de `raw/articles/`, `raw/transcripts/`, `raw/repos/` (exceto .gitkeep)
-2. Deletar `wiki/sources/`, `wiki/entities/`, `wiki/concepts/`, `wiki/projects/`, `wiki/patterns/`, `wiki/decisions/`, `wiki/synthesis/`, `wiki/comparisons/`, `wiki/questions/`, `wiki/data-dictionary/` — completamente
-3. Deletar `maps/canvas/regulacao-2-0-landscape.canvas`
-4. Deletar `outputs/reports/wiki-lint-2026-07-16.md`
-5. Resetar `wiki/index.md` para scaffold vazio
-6. Resetar `wiki/log.md` para scaffold vazio
-7. Resetar `manifests/sources.yml` para `sources: []`
-8. Verificar com `git status` e confirmar antes de commitar
-9. Commit: "Reset: clear all domain knowledge content, preserve system infrastructure"
+1. Criar `manifests/query-routing.yml`
+2. Modificar `scripts/rebuild_index.py` (format_entry)
+3. Modificar `scripts/validate_frontmatter.py` (REQUIRED_FIELDS)
+4. Modificar `.claude/agents/concept-curator.md` (template frontmatter)
+5. Modificar `.claude/agents/entity-curator.md` (template frontmatter)
+6. Modificar `.claude/agents/wiki-linter.md` (missing_abstract category)
+7. Modificar `.claude/skills/wiki-lint/SKILL.md` (check #13)
+8. Modificar `.claude/skills/wiki-query/SKILL.md` (Step 0 + Step 2b)
+9. Modificar `.claude/skills/wiki-ingest/SKILL.md` (Step 12 routing proposals)
+10. Modificar `CLAUDE.md` (frontmatter schema + QUERY Steps 0/2b + INGEST Step 12 + LINT check)
+11. Verificar com `python3 scripts/validate_frontmatter.py` (wiki vazia = 0 erros esperados)
 
 ---
 
-## Nota sobre histórico git
+## O que NÃO está incluído
 
-O histórico git anterior ficará preservado (os commits do projeto Hapvida ainda estarão acessíveis via `git log`). O reset apenas cria um novo estado limpo no branch. Se o objetivo for também apagar o histórico, isso requer `git filter-branch` ou um repo novo — operação destrutiva que vale confirmar separadamente.
+- Criar knowledge map files (`wiki/synthesis/knowledge-map-*.md`) — feitos on demand
+- Popular `abstract:` retroativamente — vault está resetado, não há páginas existentes
+- Criar entradas em `query-routing.yml` — feito progressivamente durante ingestões

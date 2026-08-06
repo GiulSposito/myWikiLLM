@@ -108,6 +108,10 @@ Open questions raised: [list]
 ADR proposals: [decisions detected, not yet created]
 Pattern proposals: [recurring approaches detected]
 Status promotion candidates: [pages with 2+ sources still in draft]
+Query routing proposals:
+  - New topic entries to add to manifests/query-routing.yml (new concept/entity clusters detected)
+  - Existing topics to append pages to (pages that match an existing topic keyword)
+  (Do NOT auto-update query-routing.yml — list proposals for user confirmation)
 Validation errors: [if any]
 ```
 

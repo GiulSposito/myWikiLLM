@@ -1,0 +1,20 @@
+# manifests/query-routing.yml
+# Maps topic keywords → canonical page slugs for that topic.
+# Maintained during INGEST Step 12 (proposals only — user confirms before adding).
+#
+# Structure per topic:
+#   <keyword>:
+#     label: "Human-readable label for this topic cluster"
+#     pages:        # concept/entity/pattern pages
+#       - slug
+#     synthesis:    # synthesis pages for this topic
+#       - slug
+#     decisions:    # decision/ADR pages for this topic
+#       - slug
+#
+# How QUERY uses this file:
+#   Step 0: read this file before index.md.
+#   If query matches one or more topic keywords → load only those pages, skip index.md.
+#   If no match → fall back to reading index.md (standard Step 1).
+
+topics: {}
