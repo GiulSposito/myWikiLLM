@@ -30,11 +30,12 @@ Classify the source before reading:
 Extract: title, author, date, type, URL/path, key claims, entities, concepts, quotes, contradictions, open questions.
 
 ### Step 3: Create source page
-- Create `wiki/sources/<slug>.md` with full frontmatter
+- Create `wiki/sources/<slug>.md` using the **source template** from `.claude/skills/wiki-ingest/references/page-templates.md`
 - For verbatim+summary pairs: use `raw_files: [path1, path2]` instead of `raw_file: path`
 - slug = lowercase, hyphens, no special chars (e.g. "mckinsey-genai-2025")
 - Fill all sections: bibliographic metadata, summary, key claims, entities, concepts, quotes, contradictions, open questions
 - Set `confidence` based on source quality and corroboration
+- For other page types (decision, synthesis, pattern, knowledge-map): use the corresponding template from `page-templates.md`
 
 ### Steps 4+5: Process entities AND concepts (parallel + batch)
 
