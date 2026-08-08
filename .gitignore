@@ -25,9 +25,11 @@ venv/
 *.tmp
 *.bak
 scratch/
+docs/optimization_round2*
 
-# Batch ingestion intermediate artifacts
-staging/
+# Batch ingestion intermediate artifacts (keep directory, ignore contents)
+staging/*
+!staging/.gitkeep
 
 # Large binary files in raw (optional — uncomment if needed)
 # raw/**/*.pdf
