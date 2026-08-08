@@ -26,6 +26,9 @@ venv/
 *.bak
 scratch/
 
+# Batch ingestion intermediate artifacts
+staging/
+
 # Large binary files in raw (optional — uncomment if needed)
 # raw/**/*.pdf
 # raw/**/*.pptx

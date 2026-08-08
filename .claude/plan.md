@@ -1,140 +1,259 @@
-# Plano: Implementar Query Optimization Strategy (3 camadas)
+# Batch Ingest Implementation Plan
 
-## Objetivo
-
-Implementar as três camadas de otimização de query descritas em `docs/query-optimization-strategy.md` nos comandos, agentes, skills e scripts do vault.
+Based on `docs/batch-ingestion.md`. Implements `/wiki-ingest-batch` as a 6-phase pipeline.
 
 ---
 
-## Escopo: O que muda em cada arquivo
+## Language Fix: Wiki em inglês apesar de fontes em português
 
-### Novos arquivos (1)
+### Diagnóstico — causa raiz em 3 camadas
 
-| Arquivo | O que é |
-|---------|---------|
-| `manifests/query-routing.yml` | Skeleton vazio, pronto para receber tópicos ao longo das ingestões |
+A transcrição VTT está em português (`"Pitch, né? Oo cockpit é uma ferramenta que vamos conseguir
+manipular"`), mas a wiki gerada fica em inglês. Rastreando o idioma por cada etapa:
 
-### Arquivos modificados (9)
+```
+VTT (pt-BR) → Extração (EN) → Curadoria (EN) → Renderer/Writer (EN hardcoded)
+                ↑ raiz         ↑ cascata               ↑ crôme estrutural
+```
 
-| Arquivo | Mudança |
-|---------|---------|
-| `CLAUDE.md` | (1) Schema frontmatter: adicionar `abstract:` após `aliases:`. (2) QUERY: adicionar Step 0 (routing) e Step 2b (knowledge maps). (3) INGEST Step 12: adicionar "Query routing proposals" ao relatório. (4) LINT: adicionar check de `abstract` ausente. |
-| `.claude/skills/wiki-query/SKILL.md` | Adicionar Step 0 (ler query-routing.yml) antes do Step 1; adicionar Step 2b (verificar knowledge map) após Step 2. |
-| `.claude/skills/wiki-ingest/SKILL.md` | Adicionar ao Step 12 report: "Query routing proposals" com instruções de quando propor. |
-| `.claude/skills/wiki-lint/SKILL.md` | Adicionar check #13: pages sem `abstract:` em concepts/entities/synthesis → flag como `needs-review`. |
-| `.claude/agents/wiki-linter.md` | Adicionar categoria `missing_abstract` ao JSON output; adicionar ao algoritmo single-pass (acumular `abstract` absent por arquivo). |
-| `.claude/agents/concept-curator.md` | Template de página: adicionar campo `abstract:` no frontmatter (após `aliases:`), com instrução de 1–2 frases factuais. |
-| `.claude/agents/entity-curator.md` | Template de página: adicionar campo `abstract:` no frontmatter (após `aliases:`), com instrução de 1–2 frases factuais. |
-| `scripts/rebuild_index.py` | Em `format_entry()`: extrair `abstract` do frontmatter e appendar na linha do índice quando presente. |
-| `scripts/validate_frontmatter.py` | Adicionar `abstract` à lista `REQUIRED_FIELDS` (vault está resetado; novas páginas devem ter o campo). |
+**Camada 1 — Extração (raiz):** `BATCH_EXTRACTION_RULES` está escrito inteiramente em inglês.
+O Haiku recebe um prompt misto: `source-reader.md` em português + `BATCH_EXTRACTION_RULES` em
+inglês + transcrição em português. Sem instrução explícita de idioma, o LLM infere que inglês é o
+idioma esperado (o "idioma de trabalho" do prompt) e escreve `factual_summary`, textos de claims,
+nomes de conceitos e entidades em inglês.
+
+**Camada 2 — Curadoria (cascata):** `CURATION_SYSTEM_PROMPT` está 100% em inglês e não tem
+instrução de idioma. As evidências recebidas (claims da extração) já chegam em inglês. O Sonnet
+escreve `abstract` e `definition` em inglês.
+
+**Camada 3 — Renderer/Writer (chrome estrutural):** Todos os headers de seção estão hardcoded em
+inglês em `renderer.py` e `writer.py`: "Bibliographic Metadata", "Key Claims", "Relevant Entities",
+"Key Facts", "Claims Added by Batch Ingest", etc.
+
+### Solução
+
+Adicionar configuração `wiki_language` ao pipeline e propagar para todas as camadas:
+
+- `wiki_language: source` → instrução dinâmica ao LLM: "escreva no idioma da fonte"
+- `wiki_language: pt` / `wiki_language: en` → instrução explícita de idioma
 
 ---
 
-## Detalhe por camada
+### Mudanças planejadas
 
-### Camada 1 — Query Routing Manifest
+#### 1. `manifests/batch-ingest.yml` — novo campo de configuração
 
-**`manifests/query-routing.yml`** (novo)
 ```yaml
-# manifests/query-routing.yml
-# Maps topic keywords → canonical page slugs for that topic.
-# Updated during INGEST Step 12 (proposals only — user confirms before adding).
-topics: {}
+wiki_language: source   # "source" = match source language | "pt" | "en" | etc.
 ```
 
-**`wiki-query` SKILL.md** — inserir Step 0 antes do Step 1 atual:
-```
-### Step 0: Route the query
-- Read `manifests/query-routing.yml`
-- If the query matches one or more topic keywords:
-    Load only the pages listed under that topic (pages + synthesis + decisions)
-    Skip reading index.md entirely — proceed to Step 3
-- If no topic matches OR the file is empty:
-    Fall back to Step 1 (read index.md)
-```
+#### 2. `scripts/batch/config.py` — field no dataclass
 
-**`wiki-query` SKILL.md** — inserir Step 2b após Step 2 atual:
-```
-### Step 2b: Check for domain knowledge map
-- If the matched page cluster has > 5 pages in the same domain:
-    Check if wiki/synthesis/knowledge-map-<domain>.md exists
-    If yes: load the knowledge map instead of the individual pages
-    If no: load individual pages as usual (proceed with Step 2)
-```
-
-**`wiki-ingest` SKILL.md** — no Step 12, adicionar seção ao relatório:
-```
-Query routing proposals:
-  - New topic entries to add to manifests/query-routing.yml
-  - Existing topics to add pages to
-  (Do NOT auto-update — list proposals for user confirmation)
-```
-
----
-
-### Camada 2 — Abstract Enrichment
-
-**Frontmatter schema** (CLAUDE.md + agentes) — adicionar campo após `aliases:`:
-```yaml
-abstract: "1–2 sentence factual description of what this page contains."
-```
-
-Regras para o campo:
-- 1–2 frases
-- Factual, não meta ("This page describes..." é proibido)
-- Mesmo idioma do conteúdo da página
-- Obrigatório em: concept, entity, synthesis, source, pattern, decision
-- Opcional em: question (podem ser especulativos)
-
-**`scripts/rebuild_index.py`** — mudança na `format_entry()`:
 ```python
-abstract = data.get("abstract", "")
-entry = f"- [[{slug}]]{alias_str}"
-if abstract:
-    entry += f" — {abstract}"
-entry += f" — status: {status}, confidence: {confidence}"
+@dataclass
+class BatchIngestConfig:
+    ...
+    wiki_language: str = "source"
 ```
+Ler via `cfg.wiki_language = str(raw.get("wiki_language", "source"))`.
 
-**`scripts/validate_frontmatter.py`** — adicionar `"abstract"` a `REQUIRED_FIELDS`.
+#### 3. `scripts/batch/extractor.py` — injeção de instrução de idioma
 
-**Linter** — nova categoria `missing_abstract` no JSON output do `wiki-linter.md`:
-```json
-"missing_abstract": {
-  "count": 0,
-  "items": ["wiki/concepts/foo.md"]
+Transformar `get_system_prompt()` para receber `wiki_language` e injetar instrução ao final:
+
+```python
+_LANGUAGE_INSTRUCTIONS = {
+    "source": (
+        "Write all extracted text fields (factual_summary, claim texts, title, "
+        "entity names, concept names) in the same language as the source document."
+    ),
+    "pt": "Write all extracted text fields in Portuguese.",
+    "en": "Write all extracted text fields in English.",
 }
 ```
 
+Inserir como último parágrafo de `BATCH_EXTRACTION_RULES`.
+
+Assinatura muda para `get_system_prompt(vault_root: Path, wiki_language: str = "source") -> str`.
+
+#### 4. `scripts/batch/curator.py` — instrução de idioma na curadoria
+
+Adicionar ao final de `CURATION_SYSTEM_PROMPT`:
+
+```
+## Language
+
+Write abstract, definition, claim texts, and all prose in the same language as
+the evidence claims provided. Do not translate content to English.
+```
+
+Quando `wiki_language` é explícito (ex: "pt"), usar "Write all prose in Portuguese."
+
+Para propagar o `wiki_language` do config, `build_curation_requests()` recebe o cfg e gera o
+system prompt dinamicamente (atualmente é uma constante de módulo).
+
+#### 5. `scripts/batch/renderer.py` — headers localizados
+
+Criar um dicionário de traduções e selecionar via `wiki_language`:
+
+```python
+_LABELS = {
+    "en": {
+        "bibliographic_metadata": "Bibliographic Metadata",
+        "summary": "Summary",
+        "key_claims": "Key Claims",
+        "important_quotes": "Important Quotes",
+        "relevant_entities": "Relevant Entities",
+        "relevant_concepts": "Relevant Concepts",
+        "contradictions": "Contradictions",
+        "pages_updated": "Pages Updated",
+        "open_questions": "Open Questions",
+    },
+    "pt": {
+        "bibliographic_metadata": "Metadados Bibliográficos",
+        "summary": "Resumo",
+        "key_claims": "Claims Principais",
+        "important_quotes": "Citações Importantes",
+        "relevant_entities": "Entidades Relevantes",
+        "relevant_concepts": "Conceitos Relevantes",
+        "contradictions": "Contradições",
+        "pages_updated": "Páginas Atualizadas",
+        "open_questions": "Questões Abertas",
+    },
+}
+```
+
+`render_source_page()` recebe `wiki_language: str = "source"` — quando `"source"`, usa `"pt"` como
+fallback (maioria das fontes do projeto) mas o design permite expansão.
+
+> Nota: `wiki_language: "source"` é um hint para LLMs (instruction dinâmica) mas o renderer
+> precisa de um idioma concreto para os labels. Quando `"source"`, o renderer usa o idioma detectado
+> a partir do `extraction.title` ou cai no default configurável via
+> `resolution.language_fallback: pt` em `batch-ingest.yml`.
+
+#### 6. `scripts/batch/writer.py` — headers localizados
+
+Mesma abordagem: dicionário `_LABELS` com `"en"` e `"pt"`, aplicado às seções:
+"Claims Added by Batch Ingest", "Contradictions", "Open Questions (Proposed)",
+"Definition", "Key Facts", "Related Pages".
+
 ---
 
-### Camada 3 — Domain Knowledge Maps
+### Testes a adicionar/ajustar
 
-**`wiki-query` SKILL.md** — Step 2b já inclui a verificação do knowledge map (descrito acima).
-
-**CLAUDE.md** — adicionar template de knowledge map (tipo `synthesis`) e regra de Step 2b no protocolo QUERY.
-
-**Não criar** os knowledge maps agora — eles são criados via `/wiki-review` ou synthesis pass. O plano apenas conecta o protocolo de QUERY para usá-los quando existirem.
-
----
-
-## Sequência de execução
-
-1. Criar `manifests/query-routing.yml`
-2. Modificar `scripts/rebuild_index.py` (format_entry)
-3. Modificar `scripts/validate_frontmatter.py` (REQUIRED_FIELDS)
-4. Modificar `.claude/agents/concept-curator.md` (template frontmatter)
-5. Modificar `.claude/agents/entity-curator.md` (template frontmatter)
-6. Modificar `.claude/agents/wiki-linter.md` (missing_abstract category)
-7. Modificar `.claude/skills/wiki-lint/SKILL.md` (check #13)
-8. Modificar `.claude/skills/wiki-query/SKILL.md` (Step 0 + Step 2b)
-9. Modificar `.claude/skills/wiki-ingest/SKILL.md` (Step 12 routing proposals)
-10. Modificar `CLAUDE.md` (frontmatter schema + QUERY Steps 0/2b + INGEST Step 12 + LINT check)
-11. Verificar com `python3 scripts/validate_frontmatter.py` (wiki vazia = 0 erros esperados)
+| Arquivo | Teste |
+|---------|-------|
+| `tests/batch/test_extractor.py` | `test_system_prompt_contains_language_instruction` — verifica que a instrução de idioma aparece no prompt quando `wiki_language="source"` |
+| `tests/batch/test_extractor.py` | `test_system_prompt_explicit_language_pt` — verifica instrução "in Portuguese" quando `wiki_language="pt"` |
+| `tests/batch/test_normalizer.py` | já coberto (slugify com acentos) |
 
 ---
 
-## O que NÃO está incluído
+### Arquivos impactados (resumo)
 
-- Criar knowledge map files (`wiki/synthesis/knowledge-map-*.md`) — feitos on demand
-- Popular `abstract:` retroativamente — vault está resetado, não há páginas existentes
-- Criar entradas em `query-routing.yml` — feito progressivamente durante ingestões
+| Arquivo | Tipo de mudança |
+|---------|----------------|
+| `manifests/batch-ingest.yml` | novo campo `wiki_language: source` |
+| `scripts/batch/config.py` | novo field `wiki_language: str = "source"` |
+| `scripts/batch/extractor.py` | `get_system_prompt()` injeta instrução de idioma |
+| `scripts/batch/curator.py` | system prompt gerado dinamicamente com instrução de idioma |
+| `scripts/batch/renderer.py` | labels localizados + `wiki_language` param |
+| `scripts/batch/writer.py` | labels localizados + `wiki_language` param |
+
+Nenhuma mudança em modelos Pydantic, scanner, normalizer, resolver, grouper, state, planner.
+
+---
+
+## Phase 1 — Infrastructure (no API calls)
+
+### New files
+
+| File | Purpose |
+|------|---------|
+| `pyproject.toml` | Dependencies: pydantic>=2, anthropic, rapidfuzz, pyyaml |
+| `manifests/batch-ingest.yml` | Config: models, token limits, quality thresholds (spec §39) |
+| `scripts/batch/__init__.py` | Package marker |
+| `scripts/batch/models.py` | Pydantic v2 models: `Claim`, `Locator`, `EntityMention`, `ConceptMention`, `OpenQuestion`, `InternalTension`, `SourceExtraction`, `ClaimAddition`, `RelationAddition`, `Conflict`, `PageMutationPlan` (spec §8, §23) |
+| `scripts/batch/config.py` | Load `manifests/batch-ingest.yml` into typed dataclass |
+| `scripts/batch/state.py` | `BatchState`: create/load/save `staging/<batch>/manifest.yml`; item status transitions |
+| `scripts/batch/scanner.py` | Walk directory; SHA256 per file; dedup against `manifests/sources.yml` (rules 1–3, spec §7); line-number injector for `.md` without timestamps |
+| `scripts/batch_ingest.py` | CLI entry point — `scan` subcommand + skeleton for remaining subcommands |
+| `tests/batch/fixtures/` | 10-transcript golden fixture set (spec §44) |
+| `tests/batch/test_scanner.py` | Discovery, SHA256, dedup rules 1–3 |
+| `tests/batch/test_dedup.py` | Idempotent scan, changed-source flag |
+
+### Modified files
+- `.gitignore`: add `staging/`
+
+---
+
+## Phase 2 — MAP (Extraction Batch)
+
+### New files
+
+| File | Purpose |
+|------|---------|
+| `scripts/batch/extractor.py` | Read `source-reader.md`; build system prompt with batch rules + language instruction; chunking; `merge_source_extraction()` |
+| `scripts/batch/anthropic_batch.py` | Wrap Anthropic `client.beta.messages.batches`; submit, status, collect, retry |
+
+### CLI subcommands added
+`submit`, `status`, `collect`, `resume`, `run`
+
+---
+
+## Phase 3 — Resolution
+
+### New files
+
+| File | Purpose |
+|------|---------|
+| `scripts/batch/normalizer.py` | Unicode normalization, transliteration (NFD), slugify, entity-type validation, exact dedup, alias lookup |
+| `scripts/batch/resolver.py` | Exact → fuzzy (≥0.85) → LLM resolution; `defer` never creates pages |
+
+---
+
+## Phase 4 — REDUCE (Curation Batch)
+
+### New files
+
+| File | Purpose |
+|------|---------|
+| `scripts/batch/grouper.py` | Group resolved evidence by target wiki page |
+| `scripts/batch/curator.py` | Build Curation Batch with language-aware system prompt |
+| `scripts/batch/planner.py` | Merge PageMutationPlans → `update-plan.json` |
+
+---
+
+## Phase 5 — Writer
+
+### New files
+
+| File | Purpose |
+|------|---------|
+| `scripts/batch/renderer.py` | Deterministic source page generation with localized labels |
+| `scripts/batch/writer.py` | Single writer with localized section headers |
+
+---
+
+## Phase 6 — QA + Claude Skill
+
+### New files
+
+| File | Purpose |
+|------|---------|
+| `scripts/batch/qa.py` | Pre-apply blocking checks; sampling-based QA report |
+| `.claude/skills/wiki-ingest-batch/SKILL.md` | Claude UX skill |
+
+---
+
+## Key Design Decisions
+
+1. **Pydantic v2** — structured outputs directly from JSON Schema.
+2. **`anthropic` Python SDK** — Message Batches API.
+3. **`rapidfuzz`** — fuzzy entity resolution, threshold 0.85.
+4. **`wiki_language: source`** — LLMs follow source document language; renderer/writer use explicit language code with `pt` as project default fallback.
+5. **`staging/` is gitignored** — no intermediate artifacts in version control.
+6. **No automatic git commits** — writer leaves working tree dirty for user review.
+7. **`renderer.py` is deterministic** — source pages generated from templates, no LLM.
+8. **Contradictions in REDUCE** — embedded in Curation Batch (spec §24).
+9. **`sources.yml` backwards-compatible** — additive new fields.
