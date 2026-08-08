@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import SourceExtraction
+from .normalizer import fold_case
 from .state import BatchState
 
 
@@ -103,7 +104,6 @@ def group_evidence(
         name_to_target: dict[str, tuple[str, str, str]] = {}  # norm_name → (type, slug, title)
 
         for mention in extraction.entities:
-            from .normalizer import fold_case
             norm = fold_case(mention.name)
             decision = resolution_map.get(norm)
             if decision and decision["action"] in ("existing", "new"):
@@ -112,7 +112,6 @@ def group_evidence(
                     name_to_target[norm] = ("entity", target_slug, mention.name)
 
         for mention in extraction.concepts:
-            from .normalizer import fold_case
             norm = fold_case(mention.name)
             decision = resolution_map.get(norm)
             if decision and decision["action"] in ("existing", "new"):

@@ -361,6 +361,18 @@ def apply_update_plan(
     skipped: list[str] = []
     apply_count = 0
 
+    # Build source_key → [plans] lookup once (avoids O(N²) glob inside the loop)
+    curation_dir = state.batch_dir / "curation"
+    source_to_plans: dict[str, list[PageMutationPlan]] = {}
+    if curation_dir.exists():
+        for cp in curation_dir.glob("*.json"):
+            try:
+                mp = PageMutationPlan.model_validate_json(cp.read_text(encoding="utf-8"))
+                source_to_plans.setdefault(mp.slug, []).append(mp)
+            except Exception:
+                pass
+    all_plans = [mp for plans in source_to_plans.values() for mp in plans]
+
     # Apply concept/entity mutation plans
     for fe in plan.files:
         if fe.get("_status") == "needs-replan":
@@ -387,7 +399,6 @@ def apply_update_plan(
             tmp.replace(target_path)
             written.append(fe["path"])
             apply_count += 1
-            action_label = "create" if not target_path.with_suffix(".md.tmp").exists() else mp.action
             n_claims = len(mp.claims_to_add)
             detail = f"{mp.action}, {n_claims} claims"
             if mp.conflicts:
@@ -411,17 +422,7 @@ def apply_update_plan(
             if res_path.exists():
                 resolution_map = json.loads(res_path.read_text(encoding="utf-8"))
 
-            # Find applied plans for this source
-            applied_plans = []
-            curation_dir = state.batch_dir / "curation"
-            if curation_dir.exists():
-                for cp in curation_dir.glob("*.json"):
-                    try:
-                        mp = PageMutationPlan.model_validate_json(cp.read_text(encoding="utf-8"))
-                        # Include plan if this source contributed
-                        applied_plans.append(mp)
-                    except Exception:
-                        pass
+            applied_plans = all_plans
 
             source_page = render_source_page(
                 source_key, extraction, resolution_map, applied_plans,

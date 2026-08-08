@@ -12,7 +12,7 @@ Use when the user wants to audit the health of the wiki, or after a batch ingest
 
 ### Checks to run
 
-1. **Dead links**: wikilinks `[[...]]` pointing to non-existent files. Use `python3 scripts/validate_links.py` for a deterministic baseline, then supplement with semantic checks.
+1. **Dead links**: wikilinks `[[...]]` pointing to non-existent files. Use `python3 scripts/wiki_lint.py` to run all deterministic checks in parallel (validate_frontmatter, validate_links, find_orphans), then supplement with semantic checks.
 
 2. **Orphan pages**: pages with no inbound links from other wiki pages. Use `python3 scripts/find_orphans.py` for a deterministic baseline. Note: pages inside `wiki/data-dictionary/` that are linked from their domain `index.md` are NOT true orphans — the linter should cross-check this. The `wiki-linter` agent uses a single-pass algorithm that accumulates all link data in one read per file before cross-checking.
 

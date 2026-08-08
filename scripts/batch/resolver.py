@@ -362,6 +362,8 @@ def resolve_batch(
         if n_deferred:
             detail += f", {n_deferred} deferred"
         progress.step(resolved, label=item.source_key, detail=detail)
+        if resolved % 10 == 0:
+            state.save()
 
     progress.done(f"{resolved} sources, {len(deferred_items)} total deferred")
     return resolved, len(deferred_items)

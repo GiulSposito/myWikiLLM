@@ -382,29 +382,27 @@ def cmd_resume(args: argparse.Namespace) -> int:
     if state is None:
         return 1
 
-    # Determine next step from item statuses
-    statuses = {i.status for i in state.items}
-
-    if "scanned" in statuses:
+    # Determine next step by checking for items still pending in each stage
+    if state.items_by_status("scanned"):
         print("Next step: submit")
         args.batch = str(batch_dir)
         return cmd_submit(args)
 
-    if "submitted" in statuses:
+    if state.items_by_status("submitted"):
         extraction_batches = state.provider_batches.get("extraction", [])
         if extraction_batches:
             print("Next step: collect")
             return cmd_collect(args)
 
-    if "extracted" in statuses and "normalized" not in statuses:
+    if state.items_by_status("extracted"):
         print("Next step: normalize")
         return cmd_normalize(args)
 
-    if "normalized" in statuses and "resolved" not in statuses:
+    if state.items_by_status("normalized"):
         print("Next step: resolve")
         return cmd_resolve(args)
 
-    if "resolved" in statuses and "curated" not in statuses:
+    if state.items_by_status("resolved"):
         print("Next step: curate")
         return cmd_curate(args)
 

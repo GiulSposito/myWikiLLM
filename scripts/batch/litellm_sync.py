@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -97,16 +98,13 @@ def run_extraction_sync(
     failed = 0
     progress = Progress("Extraction", total=len(items))
 
-    for item in items:
+    def _extract_one(item: BatchItem) -> tuple[str, str | None]:
+        """Returns (source_key, error_or_None). Writes output to disk on success."""
         if not item.files:
-            continue
+            return item.source_key, "no files"
         source_path = vault_root / item.files[0]
         if not source_path.exists():
-            state.update_status(item.source_key, "failed_extraction",
-                                error="source file not found")
-            failed += 1
-            continue
-
+            return item.source_key, "source file not found"
         try:
             transcript = scan_prepare(source_path)
             chunks = chunk_transcript(
@@ -114,9 +112,8 @@ def run_extraction_sync(
                 target_tokens=cfg.chunking.target_tokens,
                 overlap_tokens=cfg.chunking.overlap_tokens,
             )
-
             chunk_extractions: list[SourceExtraction] = []
-            for chunk_idx, chunk in enumerate(chunks):
+            for chunk in chunks:
                 user_msg = (
                     f"Extract structured knowledge from this transcript:\n\n"
                     f"Source path: {item.files[0]}\n"
@@ -130,8 +127,7 @@ def run_extraction_sync(
                     max_tokens=cfg.tokens.extraction_max_output,
                     json_schema=schema,
                 )
-                extraction = SourceExtraction.model_validate_json(raw)
-                chunk_extractions.append(extraction)
+                chunk_extractions.append(SourceExtraction.model_validate_json(raw))
 
             merged = merge_source_extraction(chunk_extractions)
             for idx, claim in enumerate(merged.claims):
@@ -139,13 +135,7 @@ def run_extraction_sync(
 
             out_path = extraction_dir / f"{item.source_key}.json"
             out_path.write_text(merged.model_dump_json(indent=2), encoding="utf-8")
-            state.update_status(item.source_key, "extracted")
-            item.provider_batch_id = "litellm-sync"
-            collected += 1
-            n_claims = len(merged.claims)
-            progress.step(collected + failed, label=item.source_key,
-                          detail=f"{n_claims} claims")
-
+            return item.source_key, None
         except Exception as exc:
             errors_dir = state.batch_dir / "errors"
             errors_dir.mkdir(exist_ok=True)
@@ -154,9 +144,23 @@ def run_extraction_sync(
                            ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
-            state.update_status(item.source_key, "failed_extraction", error=str(exc))
-            failed += 1
-            progress.fail(item.source_key, str(exc)[:80])
+            return item.source_key, str(exc)
+
+    workers = min(4, len(items)) or 1
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(_extract_one, item): item for item in items}
+        for future in as_completed(futures):
+            item = futures[future]
+            source_key, error = future.result()
+            if error:
+                state.update_status(source_key, "failed_extraction", error=error)
+                failed += 1
+                progress.fail(source_key, error[:80])
+            else:
+                state.update_status(source_key, "extracted")
+                item.provider_batch_id = "litellm-sync"
+                collected += 1
+                progress.step(collected + failed, label=source_key)
 
     progress.done(f"{collected} extracted, {failed} failed")
     return collected, failed
@@ -210,7 +214,7 @@ def run_curation_sync(
     vault_root: Path,
 ) -> list[PageMutationPlan]:
     """Run curation synchronously via litellm. Returns list of PageMutationPlan."""
-    from .curator import CURATION_SYSTEM_PROMPT, build_curation_requests
+    from .curator import _build_curation_system_prompt, build_curation_requests
 
     schema = PageMutationPlan.model_json_schema()
     requests = build_curation_requests(groups, cfg)
@@ -218,24 +222,27 @@ def run_curation_sync(
     curation_dir.mkdir(exist_ok=True)
     plans: list[PageMutationPlan] = []
 
-    for req in requests:
+    def _curate_one(req: dict) -> PageMutationPlan | None:
         params = req["params"]
-        system_text = params["system"][0]["text"]
-        user_text = params["messages"][0]["content"]
-
         try:
             raw = _litellm_call(
-                model=params["model"],  # already tiered by build_curation_requests
-                system=system_text,
-                user=user_text,
+                model=params["model"],
+                system=params["system"][0]["text"],
+                user=params["messages"][0]["content"],
                 max_tokens=cfg.tokens.curation_max_output,
                 json_schema=schema,
             )
             plan = PageMutationPlan.model_validate_json(raw)
             out = curation_dir / f"{plan.page_type}_{plan.slug}.json"
             out.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
-            plans.append(plan)
+            return plan
         except Exception:
-            pass
+            return None
+
+    workers = min(4, len(requests)) or 1
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for plan in pool.map(_curate_one, requests):
+            if plan is not None:
+                plans.append(plan)
 
     return plans

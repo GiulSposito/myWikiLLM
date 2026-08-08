@@ -3,7 +3,7 @@ find_orphans.py
 Lista todas as páginas em wiki/ que não recebem nenhum link de entrada (páginas órfãs).
 
 Usa o mesmo regex e lógica de resolução de links que validate_links.py:
-- Suporta [[slug]], [[slug|display]], [[path/to/slug|display]] e \| (backslash-pipe)
+- Suporta [[slug]], [[slug|display]], [[path/to/slug|display]] e \\| (backslash-pipe)
 - Resolve tanto por stem (nome do arquivo sem extensão) quanto por path relativo
 """
 
@@ -26,39 +26,32 @@ def normalize_slug(raw: str) -> str:
     return raw.strip().lower().replace(" ", "-").removesuffix(".md")
 
 
-def collect_all_slugs(wiki_dir: Path) -> dict[str, Path]:
-    """Retorna mapeamento stem_lowercase -> Path para todos os .md."""
-    return {p.stem.lower(): p for p in wiki_dir.rglob("*.md")}
-
-
-def collect_referenced_slugs(wiki_dir: Path) -> set[str]:
-    """Coleta todos os stems referenciados por wikilinks em qualquer .md.
+def collect_slugs_and_refs(wiki_dir: Path) -> tuple[dict[str, Path], set[str]]:
+    """Única passagem: retorna (all_slugs, referenced_slugs) lendo cada arquivo uma vez.
 
     Para links com path (ex: [[jas/tables/foo]]), coleta o último segmento
     como stem, além do path completo normalizado.
     """
+    all_slugs: dict[str, Path] = {}
     referenced: set[str] = set()
+
     for path in wiki_dir.rglob("*.md"):
+        all_slugs[path.stem.lower()] = path
         try:
             text = path.read_text(encoding="utf-8")
         except OSError as exc:
             print(f"[AVISO] Não foi possível ler {path}: {exc}")
             continue
         for match in WIKILINK_RE.finditer(text):
-            raw = match.group(1)
-            slug = normalize_slug(raw)
-            # Adicionar o slug completo (pode ser path como jas/tables/foo)
+            slug = normalize_slug(match.group(1))
             referenced.add(slug)
-            # Adicionar também apenas o último segmento (stem), para resolver
-            # links relativos como [[jas/tables/foo]] → stem "foo"
-            last_segment = slug.split("/")[-1]
-            referenced.add(last_segment)
-    return referenced
+            referenced.add(slug.split("/")[-1])
+
+    return all_slugs, referenced
 
 
 def main() -> int:
-    all_slugs = collect_all_slugs(WIKI_DIR)
-    referenced_slugs = collect_referenced_slugs(WIKI_DIR)
+    all_slugs, referenced_slugs = collect_slugs_and_refs(WIKI_DIR)
 
     total_pages = len(all_slugs)
     orphans: list[Path] = []

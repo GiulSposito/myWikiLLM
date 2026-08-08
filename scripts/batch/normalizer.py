@@ -192,6 +192,8 @@ def normalize_batch(state: BatchState, vault_root: Path) -> int:
         n_concepts = len(normalized.concepts)
         progress.step(count, label=item.source_key,
                       detail=f"{n_entities} entities, {n_concepts} concepts")
+        if count % 10 == 0:
+            state.save()
 
     progress.done(f"{count} items")
     return count

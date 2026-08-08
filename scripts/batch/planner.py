@@ -111,15 +111,6 @@ def build_update_plan(
         for dp in mp.proposed_decisions:
             plan.decision_proposals.append(f"{mp.slug}: {dp}")
 
-    # Count source pages to create
-    scanned_items = state.items_by_status("extracted") + \
-                    state.items_by_status("normalized") + \
-                    state.items_by_status("resolved") + \
-                    state.items_by_status("curated")
-    all_processable = state.items_by_status(
-        "extracted", "normalized", "resolved", "curated"
-    )
-
     # Source pages are one per non-duplicate item
     non_dup_items = [i for i in state.items if i.status not in ("skipped_duplicate", "changed-source")]
     for item in non_dup_items:
