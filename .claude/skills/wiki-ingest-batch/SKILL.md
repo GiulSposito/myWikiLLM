@@ -14,6 +14,57 @@ For single-source ingestion, use `/wiki-ingest` instead.
 
 ## Protocol
 
+### Step 0: Verify model configuration (LiteLLM/proxy only)
+
+Check whether a proxy or LiteLLM is in use:
+- `ANTHROPIC_BASE_URL` is set in the environment, **or**
+- `provider: litellm` is set in `manifests/batch-ingest.yml`
+
+If neither condition is true, skip this step entirely and proceed to Step 1.
+
+Otherwise, run:
+
+```bash
+python3 scripts/batch_ingest.py models
+```
+
+**Exit 0 — already configured or not needed:**
+Nothing to do. Proceed to Step 1.
+
+**Exit 1 — proxy unreachable:**
+Warn the user: the proxy catalog could not be reached. Ask whether to continue
+with the currently configured model names (which may fail at runtime) or abort.
+
+**Exit 2 — proxy reachable, model names need review:**
+Present the full output to the user. It shows:
+- All models available in the proxy catalog (with recommendations per pipeline step)
+- The currently configured names, flagged if not found in the catalog
+
+Ask the user to choose a model for each of the four pipeline steps:
+
+> "Which model should be used for each pipeline step?
+> The recommended models are marked above.
+> You can accept the recommendation or pick any model from the list."
+
+Steps and their role:
+| Step | Config key | Recommended tier | Why |
+|------|-----------|-----------------|-----|
+| Extraction | `extraction` | haiku (fast/cheap) | High volume, structured JSON output |
+| Curation (new pages) | `curation_new` | haiku (fast/cheap) | Creating pages from scratch, simpler task |
+| Resolution | `resolution` | sonnet (smart) | Disambiguating entity mentions |
+| Curation (updates) | `curation` | sonnet (smart) | Merging new claims into existing pages |
+
+After the user confirms their choices, edit `manifests/batch-ingest.yml` directly:
+1. Update the four model names under `models:`
+2. Set `models_configured: true`
+
+Confirm to the user:
+> "Model configuration saved. These names will be used for all future runs.
+> To reconfigure, set `models_configured: false` in `manifests/batch-ingest.yml`
+> and run `python3 scripts/batch_ingest.py models` again."
+
+---
+
 ### Step 1: Scan and preflight
 
 ```bash

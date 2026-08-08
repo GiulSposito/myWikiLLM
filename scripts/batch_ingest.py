@@ -478,6 +478,146 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Subcommand: models
+# ---------------------------------------------------------------------------
+
+# Exit codes for cmd_models:
+#   0 = already configured or not needed (direct Anthropic)
+#   1 = error (proxy unreachable, bad response)
+#   2 = proxy reachable, user should choose models interactively
+
+def cmd_models(args: argparse.Namespace) -> int:
+    """
+    Inspect / verify model configuration for the current environment.
+
+    When running through a LiteLLM proxy (ANTHROPIC_BASE_URL set or
+    provider: litellm), queries the proxy catalog, compares against the
+    currently configured model names, and reports whether the configuration
+    needs to be updated.
+
+    Exit codes:
+      0 — already configured (models_configured: true) or no proxy detected
+      1 — proxy unreachable or returned an unexpected response
+      2 — proxy reachable; models_configured is false → user should choose
+    """
+    import os
+    import dataclasses
+
+    cfg = load_config()
+
+    # Check whether a proxy is in use
+    base_url = os.environ.get("ANTHROPIC_BASE_URL", "").rstrip("/")
+    using_proxy = bool(base_url) or cfg.provider == "litellm"
+
+    if not using_proxy:
+        print("Provider: Anthropic (direct) — no model configuration needed.")
+        print(f"  extraction:   {cfg.models.extraction}")
+        print(f"  resolution:   {cfg.models.resolution}")
+        print(f"  curation:     {cfg.models.curation}")
+        print(f"  curation_new: {cfg.models.curation_new}")
+        return 0
+
+    if cfg.models_configured:
+        print("Models already configured (models_configured: true).")
+        print(f"  extraction:   {cfg.models.extraction}")
+        print(f"  resolution:   {cfg.models.resolution}")
+        print(f"  curation:     {cfg.models.curation}")
+        print(f"  curation_new: {cfg.models.curation_new}")
+        print()
+        print("To reconfigure, set 'models_configured: false' in manifests/batch-ingest.yml "
+              "and run this command again.")
+        return 0
+
+    # Proxy detected and not yet configured — query the catalog
+    if not base_url:
+        print("Provider: litellm (no ANTHROPIC_BASE_URL set).")
+        print("Cannot query model catalog without ANTHROPIC_BASE_URL.")
+        print("Set ANTHROPIC_BASE_URL in your environment or .env file, then re-run.")
+        print()
+        print("Current model names (may not match proxy catalog):")
+        print(f"  extraction:   {cfg.models.extraction}")
+        print(f"  resolution:   {cfg.models.resolution}")
+        print(f"  curation:     {cfg.models.curation}")
+        print(f"  curation_new: {cfg.models.curation_new}")
+        return 2
+
+    from scripts.batch.config import list_proxy_models
+    token = os.environ.get("ANTHROPIC_AUTH_TOKEN", "")
+
+    try:
+        model_ids = list_proxy_models(base_url, token)
+    except Exception as exc:
+        print(f"Error: could not reach proxy at {base_url}/v1/models: {exc}", file=sys.stderr)
+        print("Check that ANTHROPIC_BASE_URL is correct and the proxy is running.")
+        return 1
+
+    # Determine recommended models per role using keyword heuristics
+    mr = cfg.model_resolution
+    role_keywords = {
+        "extraction":   mr.extraction_keyword,
+        "resolution":   mr.resolution_keyword,
+        "curation":     mr.curation_keyword,
+        "curation_new": mr.extraction_keyword,
+    }
+
+    def _recommend(keyword: str) -> str | None:
+        kw = keyword.lower()
+        for mid in model_ids:
+            if "anthropic." in mid.lower() and kw in mid.lower():
+                return mid
+        for mid in model_ids:
+            if kw in mid.lower():
+                return mid
+        return None
+
+    recommendations: dict[str, str | None] = {
+        role: _recommend(kw) for role, kw in role_keywords.items()
+    }
+
+    configured = dataclasses.asdict(cfg.models)
+    configured_set = set(configured.values())
+
+    # Print available models
+    print(f"Proxy: {base_url}")
+    print(f"Available models ({len(model_ids)} found):")
+    for mid in model_ids:
+        tags = []
+        for role, rec in recommendations.items():
+            if rec == mid:
+                tags.append(f"recommended for {role}")
+        tag_str = f"  ← {', '.join(tags)}" if tags else ""
+        in_use = "  [currently configured]" if mid in configured_set else ""
+        print(f"  {mid}{tag_str}{in_use}")
+
+    print()
+    print("Current configuration:")
+    roles_attrs = [
+        ("extraction",   "extraction"),
+        ("resolution",   "resolution"),
+        ("curation",     "curation"),
+        ("curation_new", "curation_new"),
+    ]
+    for role, attr in roles_attrs:
+        name = getattr(cfg.models, attr)
+        found = name in model_ids
+        status = "" if found else "  [NOT FOUND in proxy catalog]"
+        print(f"  {role:<14} {name}{status}")
+
+    print()
+    any_missing = any(getattr(cfg.models, attr) not in model_ids for _, attr in roles_attrs)
+    if any_missing:
+        print("ACTION REQUIRED: one or more configured model names are not in the proxy catalog.")
+        print("Use the model names listed above to update manifests/batch-ingest.yml,")
+        print("then set 'models_configured: true' to lock the configuration.")
+    else:
+        print("All configured model names are available in the proxy catalog.")
+        print("Set 'models_configured: true' in manifests/batch-ingest.yml to lock the")
+        print("configuration and skip this check on future runs.")
+
+    return 2
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -559,6 +699,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("directory", help="Directory containing transcripts")
     p_run.add_argument("--reingest-changed", action="store_true")
     p_run.set_defaults(func=cmd_run)
+
+    # models
+    p_models = sub.add_parser(
+        "models",
+        help="Check / verify model configuration for the current environment (LiteLLM/proxy)",
+    )
+    p_models.set_defaults(func=cmd_models)
 
     return parser
 

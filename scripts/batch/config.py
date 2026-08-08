@@ -119,6 +119,9 @@ class BatchIngestConfig:
     # "litellm"   → synchronous litellm calls (any provider, no batch discount)
     provider: str = "anthropic"
     wiki_language: str = "source"
+    # True after the user has run the interactive model wizard (Step 0 of wiki-ingest-batch).
+    # When True, model names in .models are used as-is — no auto keyword-matching.
+    models_configured: bool = False
     models: ModelsConfig = field(default_factory=ModelsConfig)
     model_resolution: ModelResolutionConfig = field(default_factory=ModelResolutionConfig)
     tokens: TokensConfig = field(default_factory=TokensConfig)
@@ -148,6 +151,7 @@ def load_config(path: Path = CONFIG_PATH) -> BatchIngestConfig:
     cfg.schema_version = str(raw.get("schema_version", "1"))
     cfg.provider = str(raw.get("provider", "anthropic"))
     cfg.wiki_language = str(raw.get("wiki_language", "source"))
+    cfg.models_configured = bool(raw.get("models_configured", False))
 
     if m := raw.get("models"):
         cfg.models = _nested(ModelsConfig, m)
@@ -178,6 +182,30 @@ def load_config(path: Path = CONFIG_PATH) -> BatchIngestConfig:
 _resolved_models: dict[str, str] = {}
 
 
+def list_proxy_models(base_url: str, token: str = "") -> list[str]:
+    """
+    Query a proxy's /v1/models endpoint and return the list of model IDs.
+
+    Skips TLS verification — proxies often use self-signed / corporate CA certs.
+    Raises on network or parse error so callers can handle it explicitly.
+    """
+    import json
+    import ssl
+    import urllib.request
+
+    url = base_url.rstrip("/") + "/v1/models"
+    req = urllib.request.Request(
+        url,
+        headers={"Authorization": f"Bearer {token}"} if token else {},
+    )
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    with urllib.request.urlopen(req, timeout=5, context=ctx) as resp:
+        data = json.loads(resp.read())
+    return [m["id"] for m in data.get("data", [])]
+
+
 def resolve_model_names(cfg: "BatchIngestConfig", vault_root: Path = VAULT_ROOT) -> None:
     """
     When running through a proxy (ANTHROPIC_BASE_URL set), query the proxy's
@@ -185,9 +213,14 @@ def resolve_model_names(cfg: "BatchIngestConfig", vault_root: Path = VAULT_ROOT)
     available model whose id contains the configured keyword.
 
     Mutates cfg.models in-place. Idempotent (cached after first call).
-    No-op when ANTHROPIC_BASE_URL is not set (direct Anthropic).
+    No-op when:
+    - ANTHROPIC_BASE_URL is not set (direct Anthropic), or
+    - cfg.models_configured is True (user has explicitly chosen model names).
     """
     import os
+
+    if cfg.models_configured:
+        return  # user explicitly configured — trust the names as written
 
     base_url = os.environ.get("ANTHROPIC_BASE_URL", "").rstrip("/")
     if not base_url:
@@ -202,26 +235,13 @@ def resolve_model_names(cfg: "BatchIngestConfig", vault_root: Path = VAULT_ROOT)
             cfg.models.resolution = _resolved_models["resolution"]
         if "curation" in _resolved_models:
             cfg.models.curation = _resolved_models["curation"]
+        if "curation_new" in _resolved_models:
+            cfg.models.curation_new = _resolved_models["curation_new"]
         return
 
     try:
-        import ssl
-        import urllib.request
-        import json
-
         token = os.environ.get("ANTHROPIC_AUTH_TOKEN", "")
-        req = urllib.request.Request(
-            f"{base_url}/v1/models",
-            headers={"Authorization": f"Bearer {token}"} if token else {},
-        )
-        # Proxy may use a self-signed / corporate CA cert — skip verification for
-        # this internal catalog query (read-only, no credentials sent in body).
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        with urllib.request.urlopen(req, timeout=5, context=ctx) as resp:
-            data = json.loads(resp.read())
-        model_ids: list[str] = [m["id"] for m in data.get("data", [])]
+        model_ids = list_proxy_models(base_url, token)
     except Exception:
         return  # proxy unreachable — leave configured names unchanged
 
