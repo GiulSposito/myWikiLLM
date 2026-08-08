@@ -1,76 +1,72 @@
-# Plano: Auditoria e Otimização do wiki-ingest
+# Plano: Organização de Pastas e Visibilidade no Obsidian
 
-## Contexto
+## Diagnóstico
 
-wiki-ingest é um fluxo LLM-driven (não Python scripts): os agentes fazem leituras e escritas diretas via tool calls. wiki-ingest-batch é um pipeline Python com scripts determinísticos. A questão é o que do batch pode ser incorporado sem perder qualidade ou mudar a natureza do fluxo.
+### O que o usuário vê no Obsidian (file explorer)
+
+Obsidian exibe todos os diretórios não-ocultos na raiz:
+```
+docs/          ← 11 arquivos de dev/design, não são conteúdo da wiki
+manifests/     ← YAMLs de configuração, não são notas
+maps/          ← visual, faz sentido estar visível
+outputs/       ← relatórios gerados, faz sentido estar visível
+raw/           ← fontes brutas, faz sentido estar visível (audit trail)
+scripts/       ← Python + 10 fixtures .md de teste (poluem search/graph)
+wiki/          ← o conteúdo real
+```
+
+**Problema principal:** `scripts/tests/batch/fixtures/*.md` — 10 arquivos Markdown de fixture de teste aparecem no search, no graph e no switcher do Obsidian como se fossem notas reais da wiki. Geram links fantasma no graph.
+
+**Problema secundário:** `docs/` contém documentação de desenvolvimento (architecture.md, vision.md, optimization*.md etc.) — não são conhecimento compilado, são artefatos de projeto. Aparecem como notas no Obsidian.
 
 ---
 
 ## Achados
 
-### 1. `manifests/aliases.yml` não é consultado pelos curadores — BUG QUALIDADE
+### 1. `pyproject.toml` aponta para `tests/` (path antigo) — BUG
 
-**Arquivos:** `entity-curator.md`, `concept-curator.md`
-
-O batch pipeline carrega `aliases.yml` via `load_alias_index()` **antes** de decidir se uma entidade/conceito é novo ou existente. Assim, "Retrieval-Augmented Generation" resolve para "retrieval-augmented-generation" mesmo sem estar no frontmatter de nenhum arquivo.
-
-Os curadores do wiki-ingest apenas buscam em `wiki/concepts/` e `wiki/entities/` por nome e aliases no frontmatter. Se o nome canônico só está em `aliases.yml` (não em nenhum arquivo), **o curador cria uma página duplicada**.
-
-**Correção:** adicionar passo explícito nos curadores: "antes de criar nova página, checar `manifests/aliases.yml` para ver se o nome é alias de um slug já existente."
-
----
-
-### 2. Dedup em Step 1 não detecta "changed source" (SHA256) — QUALIDADE
-
-**Arquivo:** `SKILL.md:Step 1`
-
-O dedup check atual apenas verifica se o slug/path já está em `sources.yml`. O batch pipeline adiciona `sha256:` no registro de cada fonte e detecta quando o arquivo mudou (mesmo path, hash diferente) — emitindo um aviso explícito.
-
-O wiki-ingest não faz isso: se o usuário re-ingesta um transcript modificado, o Step 1 apenas diz "já foi ingerido" sem indicar que o conteúdo mudou.
-
-**Correção:** Step 1 do SKILL.md: instruir a verificar o campo `sha256:` em `sources.yml` comparando com `python3 -c "import hashlib; print(hashlib.sha256(open('<path>','rb').read()).hexdigest())"`. Se hash divergir: reportar como "changed source" (não apenas "already ingested").
-
----
-
-### 3. Step 10 ainda usa dois scripts sequenciais — PARALELISMO
-
-**Arquivo:** `SKILL.md:Step 10`
-
-```
-python3 scripts/validate_frontmatter.py
-python3 scripts/validate_links.py
+```toml
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 ```
 
-Já criamos `scripts/wiki_lint.py` que roda os dois (+ `find_orphans.py`) em paralelo.
+Os testes foram movidos para `scripts/tests/`. pytest não os encontra via `pytest` sem especificar o path.
 
-**Correção:** trocar por `python3 scripts/wiki_lint.py`.
-
----
-
-### 4. Steps 6 e 7 são sequenciais mas poderiam ser paralelos — PARALELISMO
-
-**Arquivo:** `SKILL.md:Steps 6, 7`
-
-Step 6 (detectar decisions/patterns) e Step 7 (contradiction-reviewer) ambos trabalham sobre os dados já extraídos no Step 2 e a source page criada no Step 3. Nenhum depende do output do outro.
-
-O SKILL.md não instrui explicitamente rodá-los em paralelo — são apresentados como sequenciais.
-
-**Correção:** adicionar nota explícita: "Steps 6 e 7 podem ser executados em paralelo."
+**Correção:** atualizar para `testpaths = ["scripts/tests"]`.
 
 ---
 
-### 5. Geração de slug sem função canônica — QUALIDADE
+### 2. Fixtures `.md` de teste poluem o Obsidian — VISIBILIDADE
 
-**Arquivo:** `SKILL.md:Step 3`, curators
+**Localização:** `scripts/tests/batch/fixtures/*.md` (10 arquivos)
 
-O SKILL.md diz `slug = lowercase, hyphens, no special chars` mas não especifica como tratar caracteres acentuados. O batch tem `slugify()` em `scripts/batch/normalizer.py` que faz NFD decomposition para `"ação" → "acao"`, `"São Paulo" → "sao-paulo"`.
+Esses arquivos aparecem no file explorer, no global search ("meeting-01", "meeting-02"...) e no graph do Obsidian como se fossem notas da wiki. Não têm frontmatter válido para a wiki.
 
-Sem isso, o agente pode gerar slugs inconsistentes: uma fonte em português pode gerar `acao.md` numa run e `ao.md` em outra dependendo de como o LLM interpreta "no special chars".
+**Melhor solução:** usar `userIgnoreFilters` do Obsidian em `app.json` para excluir `scripts/` do file explorer e do search — **sem mover arquivos**. Obsidian respeita essa config nativamente desde a versão 1.0.
 
-**Correção:** SKILL.md Step 3 e curadores: referenciar o comando canônico de geração de slug:
-```bash
-python3 -c "from scripts.batch.normalizer import slugify; print(slugify('Texto com Acentos'))"
-```
+---
+
+### 3. `docs/` visível no Obsidian — VISIBILIDADE
+
+11 arquivos de documentação de projeto (`architecture.md`, `vision.md`, `optimization*.md`, `userguide.md`...) aparecem no file explorer e search do Obsidian. São úteis para o desenvolvedor, não para o usuário da wiki.
+
+**Solução:** adicionar `docs/` ao `userIgnoreFilters` do Obsidian. O diretório permanece no repo e acessível via terminal/editor.
+
+---
+
+### 4. `.DS_Store` não commitados mas presentes — LIMPEZA
+
+`.gitignore` já exclui `.DS_Store`, mas `raw/.DS_Store` e `wiki/.DS_Store` existem no disco (não rastreados). Inofensivos, mas bagunçam `git status`.
+
+**Não é uma mudança de código** — apenas nota para o usuário rodar `git clean -fd --dry-run` para ver e `find . -name '.DS_Store' -delete` para limpar localmente.
+
+---
+
+### 5. `staging/` sem `.gitkeep` — CONSISTÊNCIA
+
+`staging/` está no `.gitignore` mas não tem `.gitkeep` para o diretório existir no clone. O batch pipeline cria o diretório via `STAGING_ROOT.mkdir(parents=True, exist_ok=True)`, então não é bloqueante. Mas se alguém clonar e tentar `ls staging/`, o diretório não existe.
+
+**Solução menor:** adicionar `staging/.gitkeep` com `staging/*` (não `staging/`) no `.gitignore` para manter o diretório mas ignorar o conteúdo.
 
 ---
 
@@ -78,17 +74,15 @@ python3 -c "from scripts.batch.normalizer import slugify; print(slugify('Texto c
 
 | # | Arquivo | Mudança |
 |---|---------|---------|
-| 1 | `entity-curator.md` | Adicionar passo: checar `manifests/aliases.yml` antes de criar nova página |
-| 2 | `concept-curator.md` | Idem |
-| 3 | `SKILL.md` Step 1 | Adicionar SHA256 check para changed-source detection |
-| 4 | `SKILL.md` Step 10 | Substituir dois scripts por `python3 scripts/wiki_lint.py` |
-| 5 | `SKILL.md` Steps 6+7 | Marcar explicitamente como paralelizáveis |
-| 6 | `SKILL.md` Step 3 + curadores | Referenciar `slugify()` do batch para geração canônica de slugs |
+| 1 | `pyproject.toml` | `testpaths = ["scripts/tests"]` |
+| 2 | `.obsidian/app.json` | Adicionar `userIgnoreFilters` para excluir `scripts` e `docs` |
+| 3 | `.gitignore` | Trocar `staging/` por `staging/*` + adicionar `staging/.gitkeep` |
+| 4 | `staging/.gitkeep` | Criar arquivo vazio para o diretório existir no clone |
 
 ## O que NÃO está sendo tocado
 
-- Fluxo de extração (source-reader agent) — bem definido e separado
-- `prepare_transcript()` / `inject_line_numbers()` — útil só no path assíncrono do batch; wiki-ingest usa o LLM para ler diretamente
-- Templates de página (`page-templates.md`) — corretos e completos
-- Steps 4+5 — já são explicitamente paralelos no SKILL.md
-- Agente `contradiction-reviewer` — bem definido
+- Estrutura de pastas do projeto — `scripts/`, `docs/` permanecem onde estão
+- `manifests/` — YAMLs não geram ruído no Obsidian (sem `.md`)
+- `maps/` e `outputs/` — conteúdo legítimo de visualização e relatórios
+- `raw/` — audit trail, correto estar visível
+- Nenhum arquivo movido de lugar
