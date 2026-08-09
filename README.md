@@ -11,7 +11,8 @@ Instead of retrieval-at-query-time (traditional RAG), knowledge is compiled once
 - [Claude Code](https://claude.ai/code) — the knowledge compiler
 - [Obsidian](https://obsidian.md) — open `llmwiki/` as a vault for navigation and reading
 - Git — version control and audit trail
-- Python 3.x — for deterministic validation scripts (no external dependencies beyond stdlib)
+- Python 3.11+ — for the batch ingest pipeline and validation scripts
+- Anthropic API key — set in `.env` (see `.env.example`)
 
 ---
 
@@ -21,11 +22,19 @@ Instead of retrieval-at-query-time (traditional RAG), knowledge is compiled once
 git clone <repo-url> llmwiki
 cd llmwiki
 
+# Install Python dependencies (required for batch ingest and validation scripts)
+pip install -e .
+
+# Optional: add LiteLLM proxy support
+# pip install -e ".[litellm]"
+
+# Configure API credentials
+cp .env.example .env
+# Edit .env and add your ANTHROPIC_API_KEY
+
 # Open in Obsidian: File → Open Vault → select the llmwiki/ directory
 # Open in Claude Code: claude (from the llmwiki/ directory)
 ```
-
-No package installation required. All LLM operations run through Claude Code slash commands.
 
 ---
 
@@ -35,6 +44,8 @@ No package installation required. All LLM operations run through Claude Code sla
 llmwiki/
   CLAUDE.md                        ← operational constitution — read before every session
   README.md                        ← this file
+  .env.example                     ← environment variable template (copy to .env)
+  pyproject.toml                   ← Python package definition and dependencies
 
   raw/                             ← SOURCE MATERIAL — IMMUTABLE
     articles/                      ← web articles, blog posts
@@ -70,22 +81,36 @@ llmwiki/
     briefings/                     ← written briefings for human consumption
     presentations/                 ← slide decks or structured exports
 
+  staging/                         ← BATCH INGEST ARTIFACTS (gitignored)
+    <batch-id>/                    ← one subdirectory per batch run
+      extraction/                  ← raw LLM extraction results
+      curation/                    ← per-page mutation plans
+
   scripts/                         ← DETERMINISTIC VALIDATION (Python, no LLM)
+    wiki_lint.py                   ← runs all checks in parallel (recommended)
     validate_frontmatter.py        ← checks required frontmatter fields and values
     validate_links.py              ← checks all [[wikilinks]] resolve to existing pages
     find_orphans.py                ← lists pages with no inbound links
     rebuild_index.py               ← regenerates wiki/index.md from frontmatter
+    batch_ingest.py                ← CLI for the batch ingestion pipeline
+    batch/                         ← batch pipeline modules
 
   manifests/                       ← TAXONOMY AND REGISTRIES
     taxonomy.yml                   ← allowed types, statuses, domains, tag prefixes
     aliases.yml                    ← global aliases for entities and concepts
     sources.yml                    ← registry of all ingested sources (dedup guard)
+    batch-ingest.yml               ← batch pipeline configuration (provider, models, quality)
+    query-routing.yml              ← topic-to-page routing for fast queries
 
   .claude/
     skills/                        ← slash commands for Claude Code
       wiki-ingest/
+      wiki-ingest-batch/
       wiki-query/
       wiki-lint/
+      wiki-reset/
+      wiki-review/
+      wiki-map/
       concept-synthesis/
     agents/                        ← specialized subagents invoked during operations
       source-reader.md
@@ -137,6 +162,57 @@ python scripts/validate_links.py
 git add wiki/ manifests/
 git commit -m "Ingest: <source title>"
 ```
+
+---
+
+### `/wiki-ingest-batch <directory>`
+
+Ingests an entire directory of source documents in a single pipeline run. Designed for bulk imports of transcripts, meeting recordings, or document collections.
+
+**What it does:**
+
+The pipeline runs in seven sequential steps — only the final `apply` step writes to `wiki/`:
+
+| Step | What happens |
+|------|-------------|
+| **Scan** | Discovers files, deduplicates against `manifests/sources.yml`, creates a batch ID |
+| **Submit** | Runs LLM extraction on all sources (Anthropic Batch API async, or LiteLLM sync) |
+| **Collect** | Retrieves async extraction results (async path only) |
+| **Normalize** | Unicode normalization, deduplication, alias lookup |
+| **Resolve** | Maps entity/concept mentions to canonical wiki page slugs |
+| **Curate** | Groups evidence by target page; one model call per page, not per source |
+| **Plan** | Dry-run: shows what will be created, updated, or flagged — no files written |
+| **Apply** | Writes source, concept, and entity pages; updates `manifests/sources.yml`, `wiki/log.md`, `wiki/index.md` |
+
+The user must review the plan and confirm before `apply` runs. No wiki files are written before that gate.
+
+**Configuration** (`manifests/batch-ingest.yml`):
+
+- `provider: anthropic` (default) — uses the Anthropic Message Batches API (async, 50% cost reduction)
+- `provider: litellm` — uses synchronous LiteLLM calls; supports any compatible provider
+
+**Example:**
+
+```bash
+/wiki-ingest-batch raw/transcripts/
+```
+
+**After batch ingest:**
+
+```bash
+git diff --stat
+python scripts/wiki_lint.py
+git add wiki/ manifests/
+git commit -m "Batch ingest: <description>"
+```
+
+**Safety invariants:**
+
+- `raw/` is never modified
+- `staging/` artifacts are gitignored — no intermediate state in version control
+- No git commits are made automatically
+- Conflicts are never silently resolved
+- Deferred resolutions (ambiguous entity mentions) never auto-create pages
 
 ---
 
@@ -269,6 +345,32 @@ Generates a visual map of a domain, concept cluster, or set of wiki pages. Saves
 
 ---
 
+### `/wiki-reset`
+
+Wipes all ingested content and resets the vault to a blank starting state. Use when you want to re-ingest from scratch — for example after changing the ingestion strategy, taxonomy, or source selection.
+
+**What it deletes:**
+
+All pages under `wiki/sources/`, `wiki/entities/`, `wiki/concepts/`, `wiki/projects/`, `wiki/patterns/`, `wiki/decisions/`, `wiki/synthesis/`, `wiki/comparisons/`, `wiki/questions/`, and `wiki/data-dictionary/`. Also clears `outputs/reports/`, `outputs/briefings/`, `outputs/presentations/`, all files in `maps/`, and `staging/` artifacts.
+
+**What it resets to blank templates:**
+
+`wiki/index.md`, `wiki/log.md`, `manifests/sources.yml`, `manifests/aliases.yml`, `manifests/query-routing.yml`.
+
+**What is never touched:**
+
+- `raw/` — the immutable audit layer is always preserved
+- `wiki/overview.md`, `wiki/dashboard.md` — vault structure pages, not ingested content
+- `manifests/taxonomy.yml`, `manifests/batch-ingest.yml` — configuration, not state
+
+**Confirmation required:** the command shows an exact inventory of files that will be deleted and requires explicit confirmation before doing anything. If you cancel, nothing is modified.
+
+```bash
+/wiki-reset
+```
+
+---
+
 ## Subagents
 
 Subagents are specialized roles invoked automatically by the main skills. They are defined in `.claude/agents/` and keep the main context clean by handling focused tasks.
@@ -361,6 +463,11 @@ Never use bare URLs inside wiki pages. Always create a `wiki/sources/<slug>.md` 
 These scripts are deterministic (no LLM) and can run independently of Claude Code.
 
 ```bash
+# Run all checks in parallel — recommended shortcut
+python scripts/wiki_lint.py
+
+# Or run each check individually:
+
 # Check all pages for required frontmatter fields and valid taxonomy values
 python scripts/validate_frontmatter.py
 
@@ -404,6 +511,27 @@ python scripts/validate_links.py
 # 6. Commit
 git add wiki/ manifests/
 git commit -m "Ingest: Paper Title"
+```
+
+### Ingesting a directory in bulk
+
+```bash
+# 1. Drop source files into raw/ subdirectories
+cp meeting-*.md raw/transcripts/
+
+# 2. Start Claude Code
+claude
+
+# 3. Run batch ingest
+/wiki-ingest-batch raw/transcripts/
+
+# 4. Review the plan (shown automatically), then confirm apply
+
+# 5. Review and commit
+git diff --stat
+python scripts/wiki_lint.py
+git add wiki/ manifests/
+git commit -m "Batch ingest: weekly meetings"
 ```
 
 ### Querying the wiki
