@@ -119,6 +119,89 @@ def test_scan_idempotent(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Cross-pathway dedup: wiki-ingest (LLM skill) → wiki-ingest-batch scanner
+# ---------------------------------------------------------------------------
+
+def test_cross_pathway_dedup_hash_only(tmp_path, monkeypatch):
+    """Entry written by wiki-ingest skill has sha256 but no raw_path.
+    Scanner must detect it via by_hash lookup (Rule 2: same hash, different/missing path)."""
+    f = tmp_path / "meeting.md"
+    f.write_text("Some content ingested via wiki-ingest")
+    h = sha256_file(f)
+
+    # wiki-ingest writes slug derived from title, not from stem+hash
+    manifest = _make_sources_yml(tmp_path, [{
+        "slug": "my-custom-title-slug",
+        "title": "My Custom Title",
+        "type": "transcript",
+        "ingested": "2026-08-01",
+        "sha256": h,
+        # no raw_path — wiki-ingest may omit it or use path:
+    }])
+    monkeypatch.setattr("scripts.batch.scanner.SOURCES_MANIFEST", manifest)
+
+    results = scan_directory(tmp_path)
+    assert len(results) == 1
+    assert results[0].status == "skipped_duplicate"
+    assert results[0].duplicate_of == "my-custom-title-slug"
+
+
+def test_cross_pathway_dedup_relative_path(tmp_path, monkeypatch):
+    """Entry written by wiki-ingest skill uses a raw_path relative to vault root.
+    Scanner must resolve it correctly even if CWD != VAULT_ROOT."""
+    from scripts.batch.scanner import VAULT_ROOT
+
+    # Create the file in a subdirectory that mirrors raw/ under vault root
+    raw_dir = VAULT_ROOT / "raw" / "_test_tmp_"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    f = raw_dir / "_dedup_test_fixture.md"
+    f.write_text("Content ingested via wiki-ingest using relative path")
+    h = sha256_file(f)
+
+    try:
+        # wiki-ingest writes relative path (relative to vault root)
+        relative_path = str(f.relative_to(VAULT_ROOT))
+        manifest = _make_sources_yml(tmp_path, [{
+            "slug": "dedup-test-fixture",
+            "raw_path": relative_path,
+            "sha256": h,
+        }])
+        monkeypatch.setattr("scripts.batch.scanner.SOURCES_MANIFEST", manifest)
+
+        results = scan_directory(raw_dir)
+        assert len(results) == 1
+        assert results[0].status == "skipped_duplicate"
+    finally:
+        f.unlink(missing_ok=True)
+        try:
+            raw_dir.rmdir()
+        except OSError:
+            pass
+
+
+def test_cross_pathway_dedup_slug_mismatch(tmp_path, monkeypatch):
+    """wiki-ingest writes a human slug (no hash suffix), scanner computes stem+hash slug.
+    Slugs differ but sha256 matches — scanner must still detect as skipped_duplicate via hash."""
+    f = tmp_path / "architecture-weekly.md"
+    f.write_text("Architecture Weekly content")
+    h = sha256_file(f)
+
+    # wiki-ingest slug: human-readable, no hash suffix
+    manifest = _make_sources_yml(tmp_path, [{
+        "slug": "architecture-weekly",
+        "sha256": h,
+    }])
+    monkeypatch.setattr("scripts.batch.scanner.SOURCES_MANIFEST", manifest)
+
+    results = scan_directory(tmp_path)
+    assert len(results) == 1
+    assert results[0].status == "skipped_duplicate"
+    # scanner's computed source_key includes hash suffix — slug is different
+    assert results[0].source_key != "architecture-weekly"
+    assert results[0].duplicate_of == "architecture-weekly"
+
+
+# ---------------------------------------------------------------------------
 # BatchState: create / load round-trip
 # ---------------------------------------------------------------------------
 

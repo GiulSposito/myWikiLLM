@@ -109,7 +109,9 @@ def scan_directory(
         if ks.sha256:
             by_hash[ks.sha256] = ks
         if ks.raw_path:
-            by_path[str(Path(ks.raw_path).resolve())] = ks
+            p = Path(ks.raw_path)
+            resolved = str((VAULT_ROOT / p).resolve() if not p.is_absolute() else p.resolve())
+            by_path[resolved] = ks
 
     results: list[ScanResult] = []
     seen_hashes: dict[str, str] = {}  # hash → source_key in this scan

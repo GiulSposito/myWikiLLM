@@ -99,7 +99,25 @@ Review all concept and entity pages touched in this ingest. For each page with `
 ### Step 9: Update navigation
 - Update `wiki/index.md` with new/updated pages (or run `python scripts/rebuild_index.py`)
 - Append to `wiki/log.md`: date, source slug, pages created, pages updated, conflicts, open questions
-- Register in `manifests/sources.yml`
+- Register in `manifests/sources.yml` using **exactly** this format:
+
+  ```yaml
+  - slug: <source-slug>
+    title: <title>
+    type: <pdf|article|slides|transcript|repo|web>
+    ingested: <YYYY-MM-DD>
+    raw_path: <path relative to vault root, e.g. raw/transcripts/foo.md>
+    sha256: <64-char hex>
+    pages_created: [<list of page slugs created>]
+    pages_updated: [<list of page slugs updated>]
+  ```
+
+  **`raw_path:` and `sha256:` are required** — the batch scanner uses both to
+  detect already-ingested files and avoid reingestão. Compute the hash with:
+  ```bash
+  python3 -c "import hashlib; print(hashlib.sha256(open('<path>','rb').read()).hexdigest())"
+  ```
+  For URL sources, omit `raw_path:` and add `url: <https://...>` instead; `sha256:` is still required (hash the downloaded content).
 
 ### Step 10: Run validation
 After writing all files, run all checks in parallel:
