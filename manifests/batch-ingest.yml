@@ -20,8 +20,8 @@ models_configured: true
 
 models:
   extraction: anthropic.claude-4-5-haiku
-  resolution: anthropic.claude-4-5-sonnet
-  curation: anthropic.claude-4-5-sonnet    # used when updating an existing wiki page
+  resolution: anthropic.claude-4-6-sonnet
+  curation: anthropic.claude-4-6-sonnet    # used when updating an existing wiki page
   curation_new: anthropic.claude-4-5-haiku # used when creating a brand-new page
 
 # When running through a proxy (ANTHROPIC_BASE_URL set), model names are
