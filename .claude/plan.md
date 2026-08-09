@@ -1,140 +1,154 @@
-# Plano: Implementar Query Optimization Strategy (3 camadas)
+# Plan: Fix cross-pathway source dedup (wiki-ingest vs wiki-ingest-batch)
 
-## Objetivo
+## Problema
 
-Implementar as três camadas de otimização de query descritas em `docs/query-optimization-strategy.md` nos comandos, agentes, skills e scripts do vault.
-
----
-
-## Escopo: O que muda em cada arquivo
-
-### Novos arquivos (1)
-
-| Arquivo | O que é |
-|---------|---------|
-| `manifests/query-routing.yml` | Skeleton vazio, pronto para receber tópicos ao longo das ingestões |
-
-### Arquivos modificados (9)
-
-| Arquivo | Mudança |
-|---------|---------|
-| `CLAUDE.md` | (1) Schema frontmatter: adicionar `abstract:` após `aliases:`. (2) QUERY: adicionar Step 0 (routing) e Step 2b (knowledge maps). (3) INGEST Step 12: adicionar "Query routing proposals" ao relatório. (4) LINT: adicionar check de `abstract` ausente. |
-| `.claude/skills/wiki-query/SKILL.md` | Adicionar Step 0 (ler query-routing.yml) antes do Step 1; adicionar Step 2b (verificar knowledge map) após Step 2. |
-| `.claude/skills/wiki-ingest/SKILL.md` | Adicionar ao Step 12 report: "Query routing proposals" com instruções de quando propor. |
-| `.claude/skills/wiki-lint/SKILL.md` | Adicionar check #13: pages sem `abstract:` em concepts/entities/synthesis → flag como `needs-review`. |
-| `.claude/agents/wiki-linter.md` | Adicionar categoria `missing_abstract` ao JSON output; adicionar ao algoritmo single-pass (acumular `abstract` absent por arquivo). |
-| `.claude/agents/concept-curator.md` | Template de página: adicionar campo `abstract:` no frontmatter (após `aliases:`), com instrução de 1–2 frases factuais. |
-| `.claude/agents/entity-curator.md` | Template de página: adicionar campo `abstract:` no frontmatter (após `aliases:`), com instrução de 1–2 frases factuais. |
-| `scripts/rebuild_index.py` | Em `format_entry()`: extrair `abstract` do frontmatter e appendar na linha do índice quando presente. |
-| `scripts/validate_frontmatter.py` | Adicionar `abstract` à lista `REQUIRED_FIELDS` (vault está resetado; novas páginas devem ter o campo). |
+Uma fonte ingerida via `/wiki-ingest` (skill LLM) não é detectada como "já ingerida"
+quando o scanner do `/wiki-ingest-batch` executa. Isso causa reingestão duplicada.
 
 ---
 
-## Detalhe por camada
+## Diagnóstico: as três causas raiz
 
-### Camada 1 — Query Routing Manifest
+### Causa 1 — `sha256:` ausente nas entradas do wiki-ingest (causa principal)
 
-**`manifests/query-routing.yml`** (novo)
-```yaml
-# manifests/query-routing.yml
-# Maps topic keywords → canonical page slugs for that topic.
-# Updated during INGEST Step 12 (proposals only — user confirms before adding).
-topics: {}
-```
+O scanner indexa fontes conhecidas por dois critérios: `by_hash` (SHA256) e `by_path`
+(caminho absoluto). Para acionar qualquer uma das duas:
 
-**`wiki-query` SKILL.md** — inserir Step 0 antes do Step 1 atual:
-```
-### Step 0: Route the query
-- Read `manifests/query-routing.yml`
-- If the query matches one or more topic keywords:
-    Load only the pages listed under that topic (pages + synthesis + decisions)
-    Skip reading index.md entirely — proceed to Step 3
-- If no topic matches OR the file is empty:
-    Fall back to Step 1 (read index.md)
-```
+- `by_hash` requer o campo `sha256:` no `sources.yml`
+- `by_path` requer o campo `raw_path:` ou `path:` no `sources.yml`
 
-**`wiki-query` SKILL.md** — inserir Step 2b após Step 2 atual:
-```
-### Step 2b: Check for domain knowledge map
-- If the matched page cluster has > 5 pages in the same domain:
-    Check if wiki/synthesis/knowledge-map-<domain>.md exists
-    If yes: load the knowledge map instead of the individual pages
-    If no: load individual pages as usual (proceed with Step 2)
-```
+O Step 9 do skill `wiki-ingest` diz apenas "Register in `manifests/sources.yml`",
+mas o template de comentário no cabeçalho do `sources.yml` não lista os campos
+`sha256:` nem `raw_path:` — lista apenas `slug`, `title`, `type`, `ingested`,
+`path`, `pages_created`, `pages_updated`. Resultado: o LLM omite `sha256:` na
+maioria das vezes, e às vezes usa `path:` com um caminho relativo ou URL.
 
-**`wiki-ingest` SKILL.md** — no Step 12, adicionar seção ao relatório:
-```
-Query routing proposals:
-  - New topic entries to add to manifests/query-routing.yml
-  - Existing topics to add pages to
-  (Do NOT auto-update — list proposals for user confirmation)
-```
+Sem `sha256:`, o `by_hash` lookup fica cego para a entrada.
 
----
+### Causa 2 — Resolução de caminho relativa ao CWD, não ao vault
 
-### Camada 2 — Abstract Enrichment
+`load_known_sources()` faz `Path(ks.raw_path).resolve()`, que usa `os.getcwd()`.
+Se o CWD na hora do scan não for a raiz do vault, a path absoluta calculada é errada
+e o `by_path` lookup falha mesmo quando o arquivo é o mesmo.
 
-**Frontmatter schema** (CLAUDE.md + agentes) — adicionar campo após `aliases:`:
-```yaml
-abstract: "1–2 sentence factual description of what this page contains."
-```
+O correto é resolver caminhos relativos contra `VAULT_ROOT` (que é definido no
+topo do módulo como `Path(__file__).parent.parent.parent`).
 
-Regras para o campo:
-- 1–2 frases
-- Factual, não meta ("This page describes..." é proibido)
-- Mesmo idioma do conteúdo da página
-- Obrigatório em: concept, entity, synthesis, source, pattern, decision
-- Opcional em: question (podem ser especulativos)
+### Causa 3 — Formato do `slug` diverge entre os dois caminhos
 
-**`scripts/rebuild_index.py`** — mudança na `format_entry()`:
+O scanner gera `source_key = slugify(path.stem) + "-" + sha256[:8]`, por exemplo
+`meeting-001-a821e682`. O skill `/wiki-ingest` usa o slugifier do normalizer
+(`from scripts.batch.normalizer import slugify`) ou ad hoc, gerando slugs como
+`meeting-001-api-gateway` (sem hash). Esses slugs são diferentes.
+
+A checagem de Rule 1 é:
 ```python
-abstract = data.get("abstract", "")
-entry = f"- [[{slug}]]{alias_str}"
-if abstract:
-    entry += f" — {abstract}"
-entry += f" — status: {status}, confidence: {confidence}"
+if known_by_hash.slug == known_by_path.slug:
+    # Rule 1: skip
+```
+Se os slugs divergem (mesmo que hash e path matchem), essa condição falha e o
+arquivo entra como `scanned` em vez de `skipped_duplicate`.
+
+Na prática: com `sha256:` presente, o `by_hash` lookup já causa skip independente
+do slug (Rule 2 ou Rule 1). Mas a divergência de slug ainda quebra Rule 1 quando
+ambos hash e path estão presentes.
+
+---
+
+## Solução: três correções
+
+### Fix 1 — `scanner.py`: resolver paths relativas contra VAULT_ROOT (1 linha)
+
+**Arquivo:** `scripts/batch/scanner.py`
+
+Em `load_known_sources()`, linha 112:
+
+```python
+# Antes (usa os.getcwd()):
+by_path[str(Path(ks.raw_path).resolve())] = ks
+
+# Depois (usa VAULT_ROOT como base):
+p = Path(ks.raw_path)
+resolved = str((VAULT_ROOT / p).resolve() if not p.is_absolute() else p.resolve())
+by_path[resolved] = ks
 ```
 
-**`scripts/validate_frontmatter.py`** — adicionar `"abstract"` a `REQUIRED_FIELDS`.
+### Fix 2 — `wiki-ingest` SKILL.md: Step 9 mandatório de registrar sha256 + raw_path
 
-**Linter** — nova categoria `missing_abstract` no JSON output do `wiki-linter.md`:
-```json
-"missing_abstract": {
-  "count": 0,
-  "items": ["wiki/concepts/foo.md"]
-}
+**Arquivo:** `.claude/skills/wiki-ingest/SKILL.md`
+
+No Step 9 ("Update navigation"), tornar explícito o formato de registro em
+`sources.yml`, incluindo `sha256:` e usando `raw_path:` (não `path:`):
+
+```yaml
+- slug: <source-key>
+  title: <title>
+  type: <type>
+  ingested: <today>
+  raw_path: <path relativo ao vault root, ex: raw/transcripts/foo.md>
+  sha256: <hash>   # obrigatório — compute com: python3 -c "import hashlib; print(hashlib.sha256(open('<path>','rb').read()).hexdigest())"
+  pages_created: [<lista de slugs>]
+  pages_updated: [<lista de slugs>]
+```
+
+### Fix 3 — `sources.yml` template: atualizar comentário de cabeçalho
+
+**Arquivo:** `manifests/sources.yml`
+
+Atualizar o comentário de formato para incluir `raw_path:` e `sha256:`:
+
+```yaml
+# Registry of ingested sources
+# Format:
+# - slug: source-slug
+#   title: Source Title
+#   type: pdf|article|slides|transcript|repo|web
+#   ingested: YYYY-MM-DD
+#   raw_path: raw/... (use raw_path for files; url: https://... for web sources)
+#   sha256: <64-char hex>   # required for dedup across ingest pathways
+#   pages_created: []
+#   pages_updated: []
+
+sources: []
 ```
 
 ---
 
-### Camada 3 — Domain Knowledge Maps
+## Testes a adicionar
 
-**`wiki-query` SKILL.md** — Step 2b já inclui a verificação do knowledge map (descrito acima).
+**Arquivo:** `scripts/tests/batch/test_dedup.py`
 
-**CLAUDE.md** — adicionar template de knowledge map (tipo `synthesis`) e regra de Step 2b no protocolo QUERY.
+Adicionar 3 novos casos de teste:
 
-**Não criar** os knowledge maps agora — eles são criados via `/wiki-review` ou synthesis pass. O plano apenas conecta o protocolo de QUERY para usá-los quando existirem.
+1. **`test_cross_pathway_dedup_hash_only`** — entry no sources.yml sem `raw_path`
+   mas com `sha256` correto → scanner deve detectar como `skipped_duplicate`
+   (via Rule 2: different path, same hash).
 
----
+2. **`test_cross_pathway_dedup_relative_path`** — entry no sources.yml com
+   `raw_path` relativo (como escreveria o skill) → `by_path` lookup deve funcionar
+   mesmo quando CWD ≠ vault root.
 
-## Sequência de execução
-
-1. Criar `manifests/query-routing.yml`
-2. Modificar `scripts/rebuild_index.py` (format_entry)
-3. Modificar `scripts/validate_frontmatter.py` (REQUIRED_FIELDS)
-4. Modificar `.claude/agents/concept-curator.md` (template frontmatter)
-5. Modificar `.claude/agents/entity-curator.md` (template frontmatter)
-6. Modificar `.claude/agents/wiki-linter.md` (missing_abstract category)
-7. Modificar `.claude/skills/wiki-lint/SKILL.md` (check #13)
-8. Modificar `.claude/skills/wiki-query/SKILL.md` (Step 0 + Step 2b)
-9. Modificar `.claude/skills/wiki-ingest/SKILL.md` (Step 12 routing proposals)
-10. Modificar `CLAUDE.md` (frontmatter schema + QUERY Steps 0/2b + INGEST Step 12 + LINT check)
-11. Verificar com `python3 scripts/validate_frontmatter.py` (wiki vazia = 0 erros esperados)
+3. **`test_cross_pathway_dedup_slug_mismatch`** — entry com slug divergente
+   (`meeting-001-api-gateway`) mas hash correto → deve ainda detectar como
+   `skipped_duplicate` (Rule 2 baseia-se apenas em hash, não em slug).
 
 ---
 
-## O que NÃO está incluído
+## Ordem de implementação
 
-- Criar knowledge map files (`wiki/synthesis/knowledge-map-*.md`) — feitos on demand
-- Popular `abstract:` retroativamente — vault está resetado, não há páginas existentes
-- Criar entradas em `query-routing.yml` — feito progressivamente durante ingestões
+1. Fix `scanner.py` (1 linha) — baixo risco, resolve Causa 2
+2. Adicionar testes para as 3 novas situações — TDD para validar os outros fixes
+3. Fix `wiki-ingest` SKILL.md Step 9 — instrução mais explícita
+4. Fix `manifests/sources.yml` cabeçalho
+5. Rodar `pytest scripts/tests/batch/test_dedup.py -v` para confirmar
+
+---
+
+## Arquivos modificados
+
+| Arquivo | Tipo de mudança |
+|---------|----------------|
+| `scripts/batch/scanner.py` | Bug fix: 3 linhas substituídas |
+| `scripts/tests/batch/test_dedup.py` | 3 novos testes |
+| `.claude/skills/wiki-ingest/SKILL.md` | Step 9: formato de registro explícito |
+| `manifests/sources.yml` | Cabeçalho de comentário atualizado |

@@ -81,7 +81,8 @@ Questões factuais ainda não esclarecidas pelas fontes disponíveis.
 ## Fluxo de decisão ao processar uma entidade
 
 1. Buscar em `wiki/entities/` por nome exato, aliases e variações conhecidas
-2. Se não encontrar: criar novo arquivo seguindo a estrutura acima
+2. Se não encontrar via arquivos: verificar `manifests/aliases.yml` — o nome pode ser alias de um slug já registrado. Se encontrar: usar a página canônica existente, não criar nova
+3. Se não encontrar em nenhum dos dois: criar novo arquivo seguindo a estrutura acima
 3. Se encontrar:
    - Atualizar `updated` e `sources[]`
    - Adicionar novos fatos com suas fontes

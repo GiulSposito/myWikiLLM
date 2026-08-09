@@ -4,7 +4,9 @@
 #   title: Source Title
 #   type: pdf|article|slides|transcript|repo|web
 #   ingested: YYYY-MM-DD
-#   path: raw/... or url: https://...
+#   raw_path: raw/...          # path relative to vault root (files)
+#   url: https://...           # URL (web sources — use instead of raw_path)
+#   sha256: <64-char hex>      # required — used by scanner to detect reingestão
 #   pages_created: []
 #   pages_updated: []
 

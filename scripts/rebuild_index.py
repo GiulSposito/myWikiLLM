@@ -78,13 +78,12 @@ def parse_frontmatter(path: Path) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def make_link(path: Path, wiki_dir: Path) -> str:
-    """Gera o wikilink correto para uma página.
+def make_link(path: Path, wiki_dir: Path, data: dict) -> str:
+    """Gera o wikilink correto para uma página (usa o frontmatter já parseado).
     Para data-dictionary: usa o path relativo ao wiki_dir para preservar a hierarquia.
     Para outros tipos: usa apenas o stem.
     """
-    data = parse_frontmatter(path)
-    if data and data.get("type") == "data-dictionary":
+    if data.get("type") == "data-dictionary":
         rel = path.relative_to(wiki_dir).with_suffix("")
         return str(rel).replace("\\", "/")
     return path.stem
@@ -158,7 +157,7 @@ def main() -> int:
         if str(page_type) == "data-dictionary" and not is_data_dict_index(path, WIKI_DIR):
             continue
 
-        link = make_link(path, WIKI_DIR)
+        link = make_link(path, WIKI_DIR, data)
         by_type.setdefault(str(page_type), []).append((link, data))
 
     # Ordenar entradas dentro de cada tipo pelo link/slug

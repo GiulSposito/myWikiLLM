@@ -12,7 +12,13 @@ Use this skill when the user wants to add knowledge from a document, article, pa
 
 ### Step 1: Dedup check
 - Check `manifests/sources.yml` to confirm this source has not been ingested before
-- If already ingested: warn the user and ask if they want to re-ingest (which updates, not duplicates)
+- If already ingested by path **and** the file has a `sha256:` entry: compare with the current file hash:
+  ```bash
+  python3 -c "import hashlib; print(hashlib.sha256(open('<path>','rb').read()).hexdigest())"
+  ```
+  - Same hash → "already ingested, no changes" — skip or ask user
+  - Different hash → "changed source" — warn the user explicitly before re-ingesting
+- If already ingested (no sha256 in record): warn the user and ask if they want to re-ingest (which updates, not duplicates)
 
 ### Step 1b: Identify input type
 Before reading, classify the source:
@@ -30,11 +36,15 @@ Classify the source before reading:
 Extract: title, author, date, type, URL/path, key claims, entities, concepts, quotes, contradictions, open questions.
 
 ### Step 3: Create source page
-- Create `wiki/sources/<slug>.md` with full frontmatter
+- Create `wiki/sources/<slug>.md` using the **source template** from `.claude/skills/wiki-ingest/references/page-templates.md`
 - For verbatim+summary pairs: use `raw_files: [path1, path2]` instead of `raw_file: path`
-- slug = lowercase, hyphens, no special chars (e.g. "mckinsey-genai-2025")
+- slug = lowercase, hyphens, no special chars, accents stripped (e.g. "mckinsey-genai-2025", "sao-paulo-2024"). Use the canonical slugifier for consistency, especially for Portuguese sources:
+  ```bash
+  python3 -c "from scripts.batch.normalizer import slugify; print(slugify('Texto com Acentos'))"
+  ```
 - Fill all sections: bibliographic metadata, summary, key claims, entities, concepts, quotes, contradictions, open questions
 - Set `confidence` based on source quality and corroboration
+- For other page types (decision, synthesis, pattern, knowledge-map): use the corresponding template from `page-templates.md`
 
 ### Steps 4+5: Process entities AND concepts (parallel + batch)
 
@@ -55,6 +65,10 @@ Execute Steps 4 e 5 SIMULTANEAMENTE (em paralelo):
 - Add `[[concept-slug]]` wikilink in source page under "Relevant Concepts"
 
 Aguardar conclusão de ambos antes de prosseguir para Step 6.
+
+### Steps 6+7: Identify projects/patterns/decisions AND contradiction review (parallel)
+
+Steps 6 and 7 are independent — execute them in parallel.
 
 ### Step 6: Identify projects, patterns, decisions
 If the source describes a specific project, recurring solution, or recorded decision: create or update the relevant page.
@@ -85,15 +99,32 @@ Review all concept and entity pages touched in this ingest. For each page with `
 ### Step 9: Update navigation
 - Update `wiki/index.md` with new/updated pages (or run `python scripts/rebuild_index.py`)
 - Append to `wiki/log.md`: date, source slug, pages created, pages updated, conflicts, open questions
-- Register in `manifests/sources.yml`
+- Register in `manifests/sources.yml` using **exactly** this format:
+
+  ```yaml
+  - slug: <source-slug>
+    title: <title>
+    type: <pdf|article|slides|transcript|repo|web>
+    ingested: <YYYY-MM-DD>
+    raw_path: <path relative to vault root, e.g. raw/transcripts/foo.md>
+    sha256: <64-char hex>
+    pages_created: [<list of page slugs created>]
+    pages_updated: [<list of page slugs updated>]
+  ```
+
+  **`raw_path:` and `sha256:` are required** — the batch scanner uses both to
+  detect already-ingested files and avoid reingestão. Compute the hash with:
+  ```bash
+  python3 -c "import hashlib; print(hashlib.sha256(open('<path>','rb').read()).hexdigest())"
+  ```
+  For URL sources, omit `raw_path:` and add `url: <https://...>` instead; `sha256:` is still required (hash the downloaded content).
 
 ### Step 10: Run validation
-After writing all files, run:
+After writing all files, run all checks in parallel:
 ```bash
-python3 scripts/validate_frontmatter.py
-python3 scripts/validate_links.py
+python3 scripts/wiki_lint.py
 ```
-Include any errors found in the Step 12 report.
+This runs `validate_frontmatter.py`, `validate_links.py`, and `find_orphans.py` concurrently and prints a combined report. Include any errors found in the Step 12 report.
 
 ### Step 11: Run wiki-lint (after batch ingests)
 After ingesting 3 or more sources in a session, run `/wiki-lint` and save the report to `outputs/reports/wiki-lint-YYYY-MM-DD.md`.

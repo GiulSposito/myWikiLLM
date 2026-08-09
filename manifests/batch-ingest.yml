@@ -1,0 +1,70 @@
+schema_version: "1"
+
+# provider: anthropic (default) → uses Anthropic Message Batches API (async, 50% discount)
+# provider: litellm              → uses synchronous litellm calls (any provider, slower)
+#
+# NOTE: Message Batches API is Anthropic-specific and cannot be used with litellm.
+# With provider: litellm, extraction runs as N sequential calls instead of one batch.
+provider: anthropic
+
+# Language for wiki page content.
+# "source" = match the source document language (recommended)
+# "pt"     = always write in Portuguese
+# "en"     = always write in English
+wiki_language: source
+
+# Set to true after running the model configuration wizard (Step 0 of wiki-ingest-batch).
+# When true, model names below are used exactly as written — no auto keyword-matching.
+# To reconfigure, set this to false and run: python3 scripts/batch_ingest.py models
+models_configured: true
+
+models:
+  extraction: anthropic.claude-4-5-haiku
+  resolution: anthropic.claude-4-5-sonnet
+  curation: anthropic.claude-4-5-sonnet    # used when updating an existing wiki page
+  curation_new: anthropic.claude-4-5-haiku # used when creating a brand-new page
+
+# When running through a proxy (ANTHROPIC_BASE_URL set), model names are
+# resolved at runtime by querying the proxy's /v1/models catalog.
+# Each keyword picks the first model whose id contains that string.
+model_resolution:
+  extraction_keyword: haiku
+  resolution_keyword: sonnet
+  curation_keyword: sonnet
+
+tokens:
+  extraction_max_output: 6000
+  resolution_max_output: 1500
+  curation_max_output: 6000
+
+cache:
+  enabled: true
+  ttl: 1h
+
+provider_batch:
+  max_requests: 5000
+  max_payload_mb: 200
+  max_retries: 2
+
+chunking:
+  enabled: true
+  target_tokens: 100000
+  overlap_tokens: 1500
+
+resolution:
+  fuzzy_auto_threshold: 0.85
+  max_candidates: 5
+
+quality:
+  sample_rate: 0.10
+  min_sample_size: 20
+  max_sample_size: 100
+  require_all_extractions_valid: true
+  critical_claim_locator_rate: 1.0
+  minimum_claim_locator_rate: 0.95
+  allow_deferred_resolution: true
+  allow_unresolved_provider_errors: false
+
+apply:
+  require_clean_git: true
+  optimistic_locking: true

@@ -91,7 +91,8 @@ Questões que permanecem sem resposta clara nas fontes disponíveis.
 ## Fluxo de decisão ao processar um conceito
 
 1. Buscar em `wiki/concepts/` por nome exato e aliases conhecidos
-2. Se não encontrar: criar novo arquivo seguindo a estrutura acima
+2. Se não encontrar via arquivos: verificar `manifests/aliases.yml` — o nome pode ser alias de um slug já registrado. Se encontrar: usar a página canônica existente, não criar nova
+3. Se não encontrar em nenhum dos dois: criar novo arquivo seguindo a estrutura acima
 3. Se encontrar:
    - Verificar se o novo conteúdo adiciona informação nova
    - Atualizar `updated` e `sources[]`
