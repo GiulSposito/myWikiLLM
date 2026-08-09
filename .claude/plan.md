@@ -1,160 +1,154 @@
-# Plan: LiteLLM Model Selection — Interactive Configuration
+# Plan: Fix cross-pathway source dedup (wiki-ingest vs wiki-ingest-batch)
 
-## Problem
+## Problema
 
-`batch_ingest.py` hardcodes Anthropic model names as defaults
-(`claude-haiku-4-5-20251001`, `claude-sonnet-5`). When running through a
-LiteLLM proxy (`ANTHROPIC_BASE_URL` set or `provider: litellm`), those names
-almost certainly don't exist in the proxy's catalog, causing silent fallbacks or
-runtime failures.
-
-Current `resolve_model_names()` in `config.py` does auto-resolve via keyword
-matching (haiku → extraction, sonnet → curation/resolution), but:
-- It picks the **first matching model** silently — the user never sees what was chosen
-- If no match is found, it falls back to the Anthropic default name (which is wrong for LiteLLM)
-- Resolved names are **only in-memory** — every run re-queries and re-picks silently
-- The user has no way to control which specific model goes to which pipeline step
-
-## Goal
-
-On first run through LiteLLM/proxy, detect that model names need configuration,
-query available models, present them to the user with recommendations, let the
-user choose one per pipeline step, and persist the choices to
-`manifests/batch-ingest.yml` so all future runs use those names directly.
+Uma fonte ingerida via `/wiki-ingest` (skill LLM) não é detectada como "já ingerida"
+quando o scanner do `/wiki-ingest-batch` executa. Isso causa reingestão duplicada.
 
 ---
 
-## Proposed Changes
+## Diagnóstico: as três causas raiz
 
-### 1. `scripts/batch/config.py`
+### Causa 1 — `sha256:` ausente nas entradas do wiki-ingest (causa principal)
 
-**a) Add `models_configured: bool = False` to `BatchIngestConfig`**
+O scanner indexa fontes conhecidas por dois critérios: `by_hash` (SHA256) e `by_path`
+(caminho absoluto). Para acionar qualquer uma das duas:
 
-A flag that means "the user has explicitly chosen and persisted model names for
-this environment." When `True`, `resolve_model_names()` becomes a no-op — the
-configured names are used as-is without keyword matching.
+- `by_hash` requer o campo `sha256:` no `sources.yml`
+- `by_path` requer o campo `raw_path:` ou `path:` no `sources.yml`
 
-**b) Load `models_configured` in `load_config()`**
+O Step 9 do skill `wiki-ingest` diz apenas "Register in `manifests/sources.yml`",
+mas o template de comentário no cabeçalho do `sources.yml` não lista os campos
+`sha256:` nem `raw_path:` — lista apenas `slug`, `title`, `type`, `ingested`,
+`path`, `pages_created`, `pages_updated`. Resultado: o LLM omite `sha256:` na
+maioria das vezes, e às vezes usa `path:` com um caminho relativo ou URL.
+
+Sem `sha256:`, o `by_hash` lookup fica cego para a entrada.
+
+### Causa 2 — Resolução de caminho relativa ao CWD, não ao vault
+
+`load_known_sources()` faz `Path(ks.raw_path).resolve()`, que usa `os.getcwd()`.
+Se o CWD na hora do scan não for a raiz do vault, a path absoluta calculada é errada
+e o `by_path` lookup falha mesmo quando o arquivo é o mesmo.
+
+O correto é resolver caminhos relativos contra `VAULT_ROOT` (que é definido no
+topo do módulo como `Path(__file__).parent.parent.parent`).
+
+### Causa 3 — Formato do `slug` diverge entre os dois caminhos
+
+O scanner gera `source_key = slugify(path.stem) + "-" + sha256[:8]`, por exemplo
+`meeting-001-a821e682`. O skill `/wiki-ingest` usa o slugifier do normalizer
+(`from scripts.batch.normalizer import slugify`) ou ad hoc, gerando slugs como
+`meeting-001-api-gateway` (sem hash). Esses slugs são diferentes.
+
+A checagem de Rule 1 é:
+```python
+if known_by_hash.slug == known_by_path.slug:
+    # Rule 1: skip
+```
+Se os slugs divergem (mesmo que hash e path matchem), essa condição falha e o
+arquivo entra como `scanned` em vez de `skipped_duplicate`.
+
+Na prática: com `sha256:` presente, o `by_hash` lookup já causa skip independente
+do slug (Rule 2 ou Rule 1). Mas a divergência de slug ainda quebra Rule 1 quando
+ambos hash e path estão presentes.
+
+---
+
+## Solução: três correções
+
+### Fix 1 — `scanner.py`: resolver paths relativas contra VAULT_ROOT (1 linha)
+
+**Arquivo:** `scripts/batch/scanner.py`
+
+Em `load_known_sources()`, linha 112:
 
 ```python
-cfg.models_configured = bool(raw.get("models_configured", False))
+# Antes (usa os.getcwd()):
+by_path[str(Path(ks.raw_path).resolve())] = ks
+
+# Depois (usa VAULT_ROOT como base):
+p = Path(ks.raw_path)
+resolved = str((VAULT_ROOT / p).resolve() if not p.is_absolute() else p.resolve())
+by_path[resolved] = ks
 ```
 
-**c) Modify `resolve_model_names()` to respect the flag**
+### Fix 2 — `wiki-ingest` SKILL.md: Step 9 mandatório de registrar sha256 + raw_path
 
-```python
-def resolve_model_names(cfg, vault_root=VAULT_ROOT):
-    if cfg.models_configured:
-        return   # user has explicitly set models — skip auto-resolution
-    ...  # existing keyword-matching logic
-```
+**Arquivo:** `.claude/skills/wiki-ingest/SKILL.md`
 
-**d) Extract `list_proxy_models(base_url, token) -> list[str]`**
-
-Pull the HTTP request logic out of `resolve_model_names()` into a reusable
-function so the new CLI subcommand can call it independently.
-
----
-
-### 2. `scripts/batch_ingest.py`
-
-**Add new `models` subcommand**
-
-```
-python3 scripts/batch_ingest.py models
-```
-
-Behavior:
-1. Reads `manifests/batch-ingest.yml` (provider, base URL, current model names, `models_configured`)
-2. If `models_configured: true` → prints current models and exits 0
-3. If `ANTHROPIC_BASE_URL` is set or `provider: litellm` → queries proxy `/v1/models`
-   - On success: prints available models + current configured models + recommendation per step → exits **2** (needs configuration)
-   - On failure (proxy unreachable): prints warning, exits 1
-4. If neither proxy nor litellm → prints "Using direct Anthropic — no model resolution needed" → exits 0
-
-Exit codes are meaningful:
-- `0` = already configured or not needed
-- `1` = error (proxy unreachable, bad response)
-- `2` = needs interactive configuration (models available, user must choose)
-
-Output format (exit 2) — human-readable table for the SKILL:
-```
-Available models (12 found):
-  anthropic.claude-haiku-4-5  ← recommended for extraction, curation_new
-  anthropic.claude-sonnet-5   ← recommended for resolution, curation
-  openai.gpt-4o-mini
-  ...
-
-Current configuration:
-  extraction:    claude-haiku-4-5-20251001  [NOT FOUND in proxy catalog]
-  resolution:    claude-sonnet-5            [NOT FOUND in proxy catalog]
-  curation:      claude-sonnet-5            [NOT FOUND in proxy catalog]
-  curation_new:  claude-haiku-4-5-20251001  [NOT FOUND in proxy catalog]
-```
-
-Recommendation logic (same keyword heuristics as before, but shown to user):
-- extraction / curation_new → keyword `haiku` → cheapest/fastest tier
-- resolution / curation → keyword `sonnet` → smarter, handles ambiguity
-
----
-
-### 3. `.claude/skills/wiki-ingest-batch/SKILL.md`
-
-**Add Step 0: Verify model configuration** (before Step 1: Scan)
-
-```
-### Step 0: Verify model configuration (LiteLLM/proxy only)
-```
-
-Logic:
-1. Check if `ANTHROPIC_BASE_URL` env var is set OR `provider: litellm` in
-   `manifests/batch-ingest.yml`
-2. If neither → skip this step entirely
-3. Run `python3 scripts/batch_ingest.py models`
-4. **Exit 0** → already configured, skip
-5. **Exit 1** → warn user, offer to continue anyway or abort
-6. **Exit 2** → present the available models table and ask:
-   > "Which model do you want to use for each step?
-   > (Recommended models are marked above)"
-   
-   For each of the 4 roles (extraction, resolution, curation, curation_new),
-   the user picks from the available list (or accepts the recommended one).
-   
-7. After user selects, Claude directly edits `manifests/batch-ingest.yml`:
-   - Updates the 4 model names under `models:`
-   - Adds `models_configured: true`
-   
-8. Confirm to the user: "Model configuration saved. These names will be used
-   for all future runs."
-
----
-
-### 4. `manifests/batch-ingest.yml`
-
-Add a commented entry explaining the new flag (not set by default — only written
-after interactive configuration):
+No Step 9 ("Update navigation"), tornar explícito o formato de registro em
+`sources.yml`, incluindo `sha256:` e usando `raw_path:` (não `path:`):
 
 ```yaml
-# Set to true after running the model configuration wizard (Step 0 of wiki-ingest-batch).
-# When true, model names above are used exactly as written, bypassing auto-resolution.
-# models_configured: false
+- slug: <source-key>
+  title: <title>
+  type: <type>
+  ingested: <today>
+  raw_path: <path relativo ao vault root, ex: raw/transcripts/foo.md>
+  sha256: <hash>   # obrigatório — compute com: python3 -c "import hashlib; print(hashlib.sha256(open('<path>','rb').read()).hexdigest())"
+  pages_created: [<lista de slugs>]
+  pages_updated: [<lista de slugs>]
+```
+
+### Fix 3 — `sources.yml` template: atualizar comentário de cabeçalho
+
+**Arquivo:** `manifests/sources.yml`
+
+Atualizar o comentário de formato para incluir `raw_path:` e `sha256:`:
+
+```yaml
+# Registry of ingested sources
+# Format:
+# - slug: source-slug
+#   title: Source Title
+#   type: pdf|article|slides|transcript|repo|web
+#   ingested: YYYY-MM-DD
+#   raw_path: raw/... (use raw_path for files; url: https://... for web sources)
+#   sha256: <64-char hex>   # required for dedup across ingest pathways
+#   pages_created: []
+#   pages_updated: []
+
+sources: []
 ```
 
 ---
 
-## What stays the same
+## Testes a adicionar
 
-- Auto keyword-resolution in `resolve_model_names()` still runs for all
-  non-configured cases (direct script calls, old batches, CI)
-- All existing pipeline subcommands and their interfaces
-- `provider: anthropic` direct path is completely unaffected
-- No changes to extractor, curator, resolver, writer, or any pipeline logic
+**Arquivo:** `scripts/tests/batch/test_dedup.py`
+
+Adicionar 3 novos casos de teste:
+
+1. **`test_cross_pathway_dedup_hash_only`** — entry no sources.yml sem `raw_path`
+   mas com `sha256` correto → scanner deve detectar como `skipped_duplicate`
+   (via Rule 2: different path, same hash).
+
+2. **`test_cross_pathway_dedup_relative_path`** — entry no sources.yml com
+   `raw_path` relativo (como escreveria o skill) → `by_path` lookup deve funcionar
+   mesmo quando CWD ≠ vault root.
+
+3. **`test_cross_pathway_dedup_slug_mismatch`** — entry com slug divergente
+   (`meeting-001-api-gateway`) mas hash correto → deve ainda detectar como
+   `skipped_duplicate` (Rule 2 baseia-se apenas em hash, não em slug).
 
 ---
 
-## Implementation Order
+## Ordem de implementação
 
-1. `config.py` — add flag, extract `list_proxy_models()`, guard in `resolve_model_names()`
-2. `batch_ingest.py` — add `models` subcommand
-3. `SKILL.md` — add Step 0
-4. `batch-ingest.yml` — add comment for new field
+1. Fix `scanner.py` (1 linha) — baixo risco, resolve Causa 2
+2. Adicionar testes para as 3 novas situações — TDD para validar os outros fixes
+3. Fix `wiki-ingest` SKILL.md Step 9 — instrução mais explícita
+4. Fix `manifests/sources.yml` cabeçalho
+5. Rodar `pytest scripts/tests/batch/test_dedup.py -v` para confirmar
+
+---
+
+## Arquivos modificados
+
+| Arquivo | Tipo de mudança |
+|---------|----------------|
+| `scripts/batch/scanner.py` | Bug fix: 3 linhas substituídas |
+| `scripts/tests/batch/test_dedup.py` | 3 novos testes |
+| `.claude/skills/wiki-ingest/SKILL.md` | Step 9: formato de registro explícito |
+| `manifests/sources.yml` | Cabeçalho de comentário atualizado |
