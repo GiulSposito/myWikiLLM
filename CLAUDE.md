@@ -7,7 +7,7 @@ You are the knowledge compiler for this vault. Transform raw source material int
 ## Architecture
 
 ```
-raw/          ← SOURCE MATERIAL — IMMUTABLE (articles, papers, slides, transcripts, repos, images, web-clippings)
+raw/          ← SOURCE MATERIAL — IMMUTABLE (articles, papers, slides, transcripts, repos, images, web-clippings, external/ stubs)
 wiki/         ← COMPILED KNOWLEDGE — LLM-maintained
   index.md       navigable index by type, domain, status
   log.md         append-only changelog of all ingestions
@@ -27,7 +27,7 @@ outputs/      ← DERIVED ARTIFACTS (reports/, briefings/, presentations/)
 scripts/      ← DETERMINISTIC VALIDATION (validate_frontmatter.py, validate_links.py, find_orphans.py, rebuild_index.py)
 manifests/    ← TAXONOMY AND REGISTRIES (taxonomy.yml, aliases.yml, sources.yml, query-routing.yml)
 .claude/
-  skills/        slash commands (wiki-ingest, wiki-query, wiki-lint, wiki-map, wiki-review, …)
+  skills/        slash commands (wiki-ingest, wiki-ref, wiki-query, wiki-lint, wiki-map, wiki-review, …)
   agents/        specialized subagents (source-reader, concept-curator, entity-curator, contradiction-reviewer, wiki-linter)
   commands/      wiki-map.md, wiki-review.md
 ```
@@ -45,6 +45,7 @@ manifests/    ← TAXONOMY AND REGISTRIES (taxonomy.yml, aliases.yml, sources.ym
 | Operation | Invoke |
 |-----------|--------|
 | Ingest a source | `/wiki-ingest` → `.claude/skills/wiki-ingest/SKILL.md` |
+| Register external reference (lightweight) | `/wiki-ref` → `.claude/skills/wiki-ref/SKILL.md` |
 | Query the wiki | `/wiki-query` → `.claude/skills/wiki-query/SKILL.md` |
 | Health check / lint | `/wiki-lint` → `.claude/skills/wiki-lint/SKILL.md` |
 | Create a map | `/wiki-map` → `.claude/commands/wiki-map.md` |

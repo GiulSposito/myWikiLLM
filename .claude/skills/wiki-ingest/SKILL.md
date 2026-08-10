@@ -23,6 +23,18 @@ Use this skill when the user wants to add knowledge from a document, article, pa
 ### Step 1b: Identify input type
 Before reading, classify the source:
 
+- **Rich document source** (`.pdf`, `.docx`, `.odt`, `.rtf`, `.epub`, `.html`, `.htm`, `.rst`, `.org`, `.tex`):
+  1. Convert it to Markdown:
+     ```bash
+     python3 scripts/convert_to_md.py <path> -v
+     ```
+     - If the companion `.md` already exists, the script skips it (idempotent). Use `--force` only if the source was updated.
+     - If conversion fails, stop and report the error to the user — do not proceed with the original file.
+  2. Continue with the resulting `<stem>.md` for all subsequent steps (reading, extraction, slug generation, sha256).
+  3. In the source page frontmatter, add: `source_original: <original_file_path_relative_to_vault_root>`
+  4. In the source page body (Bibliographic Metadata section), add a note: "Converted from `<original_format>`: `<original_file_path>`"
+  5. In `manifests/sources.yml`, add: `source_original: <original_file_path>`
+
 - **Verbatim + summary pair**: Two files from the same session (one UUID-slug verbatim, one clean-name summary) → treat as a single source. Register both paths in frontmatter as `raw_files: [path1, path2]`. Use verbatim for claims/quotes, summary for structure.
 - **Structured data catalog / repo snapshot**: Use type `data-dictionary`. Create `wiki/data-dictionary/<domain>/` with `index.md` hub + individual table pages.
 - **Audio without full transcript**: Mark `confidence: low`. Note in Bibliographic Metadata that claims are inferred from structured summary.

@@ -505,6 +505,76 @@ YYYY-MM-DD
 
 ---
 
+## Template: source (reference mode)
+
+File path: `wiki/sources/<slug>.md`
+Used by: `/wiki-ref`
+
+```markdown
+---
+type: source
+status: draft
+confidence: low
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+aliases: []
+abstract: ""
+sources: []
+tags: []
+ingest_depth: reference
+external_url: ""
+---
+
+# <Title of the Source>
+
+> [!note] Reference-only ingest
+> Esta fonte foi indexada em modo referência. Páginas de conceito e entidade NÃO foram criadas ou atualizadas. Para ingestão completa, use `/wiki-ingest`.
+
+## Bibliographic Metadata
+
+- **Author(s) / Publisher**: 
+- **Date**: 
+- **Type**: url | pdf | manual | repo | doc
+- **URL / Path**: 
+- **Raw stub**: `raw/external/<slug>.md`
+- **Accessed**: YYYY-MM-DD
+
+## Summary
+
+2–4 parágrafos descrevendo o escopo, propósito e audiência da fonte.
+
+## Key Topics
+
+Temas principais cobertos pela fonte (não claims verificáveis).
+
+- Topic 1
+- Topic 2
+
+## Mentioned Concepts
+
+Wikilinks apenas para páginas já existentes na wiki. Conceitos sem página: texto plano.
+
+- [[concept-slug]] — como se relaciona com esta fonte
+- Concept Name (sem página wiki ainda)
+
+## Mentioned Entities
+
+Wikilinks apenas para páginas já existentes na wiki. Entidades sem página: texto plano.
+
+- [[entity-slug]] — como se relaciona
+- Entity Name (sem página wiki ainda)
+
+## Access Notes
+
+Como acessar o conteúdo completo, seções relevantes, pré-requisitos de leitura.
+
+## Open Questions
+
+-
+```
+
+---
+
 ## Log Entry Format
 
 ```markdown

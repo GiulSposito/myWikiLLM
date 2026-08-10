@@ -65,6 +65,24 @@ Confirm to the user:
 
 ---
 
+### Step 0.5: Rich document pre-processing
+
+Before scanning, convert any non-Markdown source documents in the target directory:
+
+```bash
+python3 scripts/convert_to_md.py <directory> -v
+```
+
+This converts every supported rich document (`.pdf`, `.docx`, `.odt`, `.rtf`, `.epub`, `.html`, `.htm`, `.rst`, `.org`, `.tex`) that does not yet have a companion `.md` in the same directory (idempotent — existing `.md` files are skipped). The batch scanner in Step 1 will then discover the converted `.md` files as normal sources.
+
+If any conversions fail, report the errors to the user and ask whether to:
+- Continue without the failed files (they will not appear in the scan), or
+- Abort and fix the conversion errors first.
+
+If no supported rich documents are present, the script exits cleanly — no action needed.
+
+---
+
 ### Step 1: Scan and preflight
 
 ```bash
